@@ -5,10 +5,14 @@ export function expressPlugin(): Plugin {
     name: "express-plugin",
     apply: "serve",
     async configureServer(server) {
-      // Lazy load server modules only in dev mode
-      const { createServer } = await import("./server");
-      const { Server } = await import("socket.io");
-      const { setupMultiplayer } = await import("./server/multiplayer");
+      // Use string-based dynamic imports to avoid static analysis
+      const serverModule = await import(/* @vite-ignore */ "./server");
+      const socketModule = await import("socket.io");
+      const multiplayerModule = await import(/* @vite-ignore */ "./server/multiplayer");
+
+      const createServer = serverModule.createServer;
+      const Server = socketModule.Server;
+      const setupMultiplayer = multiplayerModule.setupMultiplayer;
 
       const app = createServer();
 
