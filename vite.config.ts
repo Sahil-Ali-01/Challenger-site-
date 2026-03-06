@@ -1,9 +1,6 @@
 import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { createServer } from "./server";
-import { Server } from "socket.io";
-import { setupMultiplayer } from "./server/multiplayer";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -31,7 +28,12 @@ function expressPlugin(): Plugin {
   return {
     name: "express-plugin",
     apply: "serve", // Only apply during development (serve mode)
-    configureServer(server) {
+    async configureServer(server) {
+      // Lazy load server modules only in dev mode
+      const { createServer } = await import("./server");
+      const { Server } = await import("socket.io");
+      const { setupMultiplayer } = await import("./server/multiplayer");
+
       const app = createServer();
 
       // Add Express app as middleware to Vite dev server
