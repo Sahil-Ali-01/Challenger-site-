@@ -1,62 +1,35 @@
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command, mode }) => ({
-  server: {
-    host: "localhost",
-    port: 8080,
-    fs: {
-      allow: ["./client", "./shared"],
-      deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
-    },
-  },
-  build: {
-    outDir: "dist/spa",
-  },
-  plugins: [react(), ...(command === 'serve' ? [expressPlugin()] : [])],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./client"),
-      "@shared": path.resolve(__dirname, "./shared"),
-    },
-  },
-}));
+export default defineConfig(async ({ command, mode }) => {
+  const plugins = [react()];
 
-function expressPlugin(): Plugin {
+  // Only load dev plugins during dev mode
+  if (command === 'serve') {
+    const { expressPlugin } = await import("./vite.plugin.dev");
+    plugins.push(expressPlugin());
+  }
+
   return {
-    name: "express-plugin",
-    apply: "serve", // Only apply during development (serve mode)
-    async configureServer(server) {
-      // Lazy load server modules only in dev mode
-      const { createServer } = await import("./server");
-      const { Server } = await import("socket.io");
-      const { setupMultiplayer } = await import("./server/multiplayer");
-
-      const app = createServer();
-
-      // Add Express app as middleware to Vite dev server
-      server.middlewares.use(app);
-
-      // Attach Socket.io
-      if (server.httpServer) {
-        const allowedOrigins = process.env.VITE_ALLOWED_ORIGINS?.split(',') || ['http://localhost:8080'];
-        const io = new Server(server.httpServer, {
-          cors: {
-            origin: allowedOrigins,
-            methods: ["GET", "POST"],
-            credentials: true
-          }
-        });
-        
-        // Log all connection attempts
-        io.engine.on("connection_error", (err) => {
-          console.error("🔴 Socket.IO ENGINE CONNECTION ERROR:", err);
-        });
-        
-        setupMultiplayer(io);
-      }
+    server: {
+      host: "localhost",
+      port: 8080,
+      fs: {
+        allow: ["./client", "./shared"],
+        deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
+      },
+    },
+    build: {
+      outDir: "dist/spa",
+    },
+    plugins,
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./client"),
+        "@shared": path.resolve(__dirname, "./shared"),
+      },
     },
   };
-}
+});
