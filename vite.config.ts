@@ -7,30 +7,33 @@ function expressPlugin(): Plugin {
     name: "express-plugin",
     apply: "serve",
     async configureServer(server) {
-      // Use string variables to prevent esbuild static analysis
-      // eslint-disable-next-line prefer-const
-      let serverPath = "./" + "server";
-      // eslint-disable-next-line prefer-const
-      let multiplayerPath = "./" + "server/multiplayer";
-
       try {
-        const serverModule = await import(/* @vite-ignore */ serverPath);
-        const socketModule = await import("socket.io");
-        const multiplayerModule = await import(/* @vite-ignore */ multiplayerPath);
+        console.log("\n🚀 Initializing Express + Socket.IO plugin...");
+        
+        // Import using relative paths
+        const serverModule = await import("./server/index");
+        const { Server: SocketIOServer } = await import("socket.io");
+        const multiplayerModule = await import("./server/multiplayer");
+
+        console.log("✅ All modules imported successfully");
 
         const createServer = serverModule.createServer;
-        const Server = socketModule.Server;
         const setupMultiplayer = multiplayerModule.setupMultiplayer;
 
         const app = createServer();
+        console.log("✅ Express app created");
 
         // Add Express app as middleware to Vite dev server
         server.middlewares.use(app);
+        console.log("✅ Express middleware added to Vite");
 
         // Attach Socket.io
         if (server.httpServer) {
-          const allowedOrigins = process.env.VITE_ALLOWED_ORIGINS?.split(',') || ['http://localhost:8080'];
-          const io = new Server(server.httpServer, {
+          console.log("✅ httpServer found, initializing Socket.IO...");
+          const allowedOrigins = process.env.VITE_ALLOWED_ORIGINS?.split(',') || ['http://localhost:8081', 'http://localhost:8080'];
+          console.log("   Allowed origins for CORS:", allowedOrigins);
+          
+          const io = new SocketIOServer(server.httpServer, {
             cors: {
               origin: allowedOrigins,
               methods: ["GET", "POST"],
@@ -38,15 +41,23 @@ function expressPlugin(): Plugin {
             }
           });
           
+          console.log("✅ Socket.IO server created");
+          
           // Log all connection attempts
           io.engine.on("connection_error", (err) => {
             console.error("🔴 Socket.IO ENGINE CONNECTION ERROR:", err);
           });
           
+          console.log("🔧 Setting up multiplayer handlers...");
           setupMultiplayer(io);
+          console.log("✅ Multiplayer setup complete!");
+          console.log("\n🎮 Socket.IO is ready on http://localhost:8081\n");
+        } else {
+          console.error("❌ httpServer not found!");
         }
       } catch (err) {
-        console.error("Failed to setup express plugin:", err);
+        console.error("\n❌ Failed to setup express plugin:");
+        console.error(err);
       }
     },
   };

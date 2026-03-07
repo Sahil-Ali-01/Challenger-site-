@@ -135,7 +135,7 @@ async function fetchBattleQuestions(): Promise<Question[]> {
 async function processMatchmakingQueue(io: Server) {
   // Check if we have 2 or more players to match
   if (matchmakingQueue.length >= 2) {
-    console.log(`\n✨ Processing queue with ${matchmakingQueue.length} players`);
+    console.log(`\n✨✨✨ PROCESSING MATCHMAKING QUEUE - ${matchmakingQueue.length} players waiting ✨✨✨`);
     const player1Id = matchmakingQueue.shift()!;
     const player2Id = matchmakingQueue.shift()!;
 
@@ -144,14 +144,27 @@ async function processMatchmakingQueue(io: Server) {
     const p1Socket = io.sockets.sockets.get(player1Id);
     const p2Socket = io.sockets.sockets.get(player2Id);
 
-    console.log(`\n🎮 Match found! Creating room ${roomId}`);
-    console.log(`   Player 1: ${p1Socket?.data.username} (userId: ${p1Socket?.data.userId})`);
-    console.log(`   Player 2: ${p2Socket?.data.username} (userId: ${p2Socket?.data.userId})`);
-    console.log(`   Socket existence: p1=${!!p1Socket}, p2=${!!p2Socket}`);
+    console.log(`\n🎮🎮🎮 MATCH CREATED! 🎮🎮🎮`);
+    console.log(`   Room ID: ${roomId}`);
+    console.log(`   Player 1 Socket ID: ${player1Id}`);
+    console.log(`   Player 1 Socket exists: ${!!p1Socket}`);
+    if (p1Socket) {
+      console.log(`   Player 1 Name: ${p1Socket?.data.username}`);
+      console.log(`   Player 1 UserId: ${p1Socket?.data.userId}`);
+    }
+    
+    console.log(`   Player 2 Socket ID: ${player2Id}`);
+    console.log(`   Player 2 Socket exists: ${!!p2Socket}`);
+    if (p2Socket) {
+      console.log(`   Player 2 Name: ${p2Socket?.data.username}`);
+      console.log(`   Player 2 UserId: ${p2Socket?.data.userId}`);
+    }
 
     if (p1Socket && p2Socket) {
       // Fetch questions (2 DB + 3 AI)
+      console.log(`\n📚 Fetching questions for battle...`);
       const questions = await fetchBattleQuestions();
+      console.log(`✅ Got ${questions.length} questions for battle`);
       
       const room: GameRoom = {
         id: roomId,
@@ -165,17 +178,25 @@ async function processMatchmakingQueue(io: Server) {
       };
 
       gameRooms[roomId] = room;
-      console.log(`✅ Room ${roomId} created and added to gameRooms. Total rooms: ${Object.keys(gameRooms).length}`);
+      console.log(`✅ Room ${roomId} created and stored in gameRooms`);
+      console.log(`   Total active rooms: ${Object.keys(gameRooms).length}`);
       
       p1Socket.join(roomId);
       p2Socket.join(roomId);
+      console.log(`✅ Both players joined Socket.IO room namespace`);
 
+      console.log(`\n📡 Sending match_found event to both players...`);
       p1Socket.emit("match_found", { roomId, opponent: { id: player2Id, username: p2Socket.data.username } });
+      console.log(`   ✅ match_found sent to Player 1 (${p1Socket.data.username})`);
+      
       p2Socket.emit("match_found", { roomId, opponent: { id: player1Id, username: p1Socket.data.username } });
-      console.log(`✅ Emitted match_found to Player 1: ${p1Socket.data.username}`);
-      console.log(`✅ Emitted match_found to Player 2: ${p2Socket.data.username}`);
+      console.log(`   ✅ match_found sent to Player 2 (${p2Socket.data.username})`);
+      
+      console.log(`\n⏳ Waiting for both players to emit player_ready event...`);
     } else {
-      console.error(`❌ Failed to create room: p1Socket=${!!p1Socket}, p2Socket=${!!p2Socket}`);
+      console.error(`❌ CRITICAL: Failed to find sockets for match!`);
+      console.error(`   Player 1 (${player1Id}): ${!!p1Socket}`);
+      console.error(`   Player 2 (${player2Id}): ${!!p2Socket}`);
     }
   }
 }
@@ -210,10 +231,11 @@ export function setupMultiplayer(io: Server) {
     console.log(`   All socket IDs: [${Array.from(io.sockets.sockets.keys()).join(", ")}]`);
 
     socket.on("join_matchmaking", ({ username, userId }) => {
-      console.log(`\n🔵 Join matchmaking event RECEIVED on socket: ${socket.id}`);
+      console.log(`\n🔵🔵🔵 Join matchmaking event RECEIVED on socket: ${socket.id}`);
       console.log(`   Username: ${username}`);
       console.log(`   UserId: ${userId}`);
-      console.log(`   Current queue: ${matchmakingQueue.length} players`);
+      console.log(`   Current queue before add: ${matchmakingQueue.length} players`);
+      console.log(`   Queue contents before: [${matchmakingQueue.join(", ")}]`);
       
       if (!userId) {
         console.error("⚠️  ERROR: userId is missing! User:", username);
@@ -224,11 +246,15 @@ export function setupMultiplayer(io: Server) {
         matchmakingQueue.push(socket.id);
         socket.data.username = username;
         socket.data.userId = userId;
-        console.log(`✅ Added to queue. New queue length: ${matchmakingQueue.length}`);
-        console.log(`   Queue contents: [${matchmakingQueue.join(", ")}]`);
+        console.log(`✅ Player ADDED to queue. New queue length: ${matchmakingQueue.length}`);
+        console.log(`   Queue contents after: [${matchmakingQueue.join(", ")}]`);
+        console.log(`   Socket data stored: { username: ${socket.data.username}, userId: ${socket.data.userId} }`);
         
         // Try to match immediately
+        console.log(`\n🎯 Attempting to process matchmaking queue immediately...`);
         processMatchmakingQueue(io);
+      } else {
+        console.warn(`⚠️ Player ${socket.id} is already in matchmaking queue!`);
       }
     });
 
@@ -274,23 +300,39 @@ export function setupMultiplayer(io: Server) {
       
       if (room && room.players[socket.id]) {
         room.players[socket.id].isReady = true;
-        console.log(`Player ${socket.id} marked as ready`);
-        console.log(`Room ${roomId} status:`, {
-          player1Ready: room.players[Object.keys(room.players)[0]]?.isReady,
-          player2Ready: room.players[Object.keys(room.players)[1]]?.isReady
+        console.log(`✅ Player ${socket.id} marked as ready`);
+        console.log(`Room ${roomId} readiness status:`, {
+          player1: `${Object.values(room.players)[0]?.username} - Ready: ${Object.values(room.players)[0]?.isReady}`,
+          player2: `${Object.values(room.players)[1]?.username} - Ready: ${Object.values(room.players)[1]?.isReady}`
         });
         
         const allReady = Object.values(room.players).every(p => p.isReady);
         if (allReady) {
-          console.log(`✅ All players ready in room ${roomId}, starting game!`);
+          console.log(`\n✅ ✅ ✅ ALL PLAYERS READY IN ROOM ${roomId}! STARTING GAME! ✅ ✅ ✅`);
+          console.log(`Broadcasting game_start to roomId: ${roomId}`);
+          console.log(`Total questions: ${room.questions.length}`);
           room.status = 'playing';
+          
+          // Double-check before emitting
+          console.log("Emitting game_start with:");
+          console.log(`  - questions: ${room.questions.length} questions`);
+          console.log(`  - players: ${Object.values(room.players).map(p => p.username).join(", ")}`);
+          
           io.to(roomId).emit("game_start", {
             questions: room.questions,
             players: room.players
           });
+          console.log(`✅ game_start emitted to room ${roomId}`);
+        } else {
+          console.log(`⏳ Waiting for other player... Current ready: ${Object.values(room.players).filter(p => p.isReady).length}/2`);
         }
       } else {
-        console.error(`❌ Room ${roomId} not found or player ${socket.id} not in room`);
+        console.error(`❌ ERROR: Room ${roomId} not found or player ${socket.id} not in room`);
+        console.error(`   Available rooms: ${Object.keys(gameRooms).join(", ")}`);
+        if (room) {
+          console.error(`   Available players in room: ${Object.keys(room.players).join(", ")}`);
+          console.error(`   Searching for socket ID: ${socket.id}`);
+        }
       }
     });
 

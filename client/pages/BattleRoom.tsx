@@ -95,7 +95,7 @@ export default function BattleRoom() {
         handleSocketReady();
       } else {
         console.log("🔹 Socket not connected yet, waiting for connect event...");
-        socket.on("connect", () => {
+        socket.once("connect", () => {
           console.log("🔹 Socket connected event fired, socket.id:", socket.id, "emitting player_ready");
           handleSocketReady();
         });
