@@ -251,13 +251,6 @@ async function fetchBattleQuestions(): Promise<Question[]> {
 }
 
 async function processMatchmakingQueue(io: Server) {
-  // Keep queue clean: unique, connected sockets only.
-  const dedupedQueue = Array.from(new Set(matchmakingQueue));
-  matchmakingQueue = dedupedQueue.filter((socketId) => {
-    const s = io.sockets.sockets.get(socketId);
-    return !!s && s.connected;
-  });
-
   // Check if we have 2 or more players to match
   if (matchmakingQueue.length >= 2) {
     console.log(`\n✨✨✨ PROCESSING MATCHMAKING QUEUE - ${matchmakingQueue.length} players waiting ✨✨✨`);
@@ -268,19 +261,6 @@ async function processMatchmakingQueue(io: Server) {
     
     const p1Socket = io.sockets.sockets.get(player1Id);
     const p2Socket = io.sockets.sockets.get(player2Id);
-
-    // If one of the queued players is stale, put the valid one back in queue.
-    if (!p1Socket || !p2Socket || !p1Socket.connected || !p2Socket.connected) {
-      console.warn("⚠️ Stale socket detected while matching. Re-queuing valid players.");
-
-      if (p1Socket && p1Socket.connected && !matchmakingQueue.includes(player1Id)) {
-        matchmakingQueue.unshift(player1Id);
-      }
-      if (p2Socket && p2Socket.connected && !matchmakingQueue.includes(player2Id)) {
-        matchmakingQueue.unshift(player2Id);
-      }
-      return;
-    }
 
     console.log(`\n🎮🎮🎮 MATCH CREATED! 🎮🎮🎮`);
     console.log(`   Room ID: ${roomId}`);
@@ -377,8 +357,6 @@ export function setupMultiplayer(io: Server) {
       
       if (!userId) {
         console.error("⚠️  ERROR: userId is missing! User:", username);
-        socket.emit("matchmaking_error", { message: "Missing user session. Please login again." });
-        return;
       }
       
       // Check if user is already in queue
@@ -392,7 +370,6 @@ export function setupMultiplayer(io: Server) {
         
         // Try to match immediately
         console.log(`\n🎯 Attempting to process matchmaking queue immediately...`);
-        socket.emit("matchmaking_joined", { queued: true, queueLength: matchmakingQueue.length });
         processMatchmakingQueue(io);
       } else {
         console.warn(`⚠️ Player ${socket.id} is already in matchmaking queue!`);

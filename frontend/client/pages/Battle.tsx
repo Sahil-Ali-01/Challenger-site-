@@ -99,8 +99,7 @@ export default function Battle() {
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
-        reconnectionAttempts: 5,
-        transports: ["websocket", "polling"]
+        reconnectionAttempts: 5
       });
       console.log("📡 New socket instance created with explicit URL");
       
@@ -146,16 +145,6 @@ export default function Battle() {
       console.log("🔀 NAVIGATING to /battle/" + roomId);
       navigate(`/battle/${roomId}`, { state: { opponent } });
       console.log("✅ Navigate called (should transition to BattleRoom)");
-    });
-
-    globalSocket.on("matchmaking_error", ({ message }) => {
-      console.error("❌ Matchmaking error:", message);
-      setIsSearching(false);
-      alert(message || "Matchmaking failed. Please try again.");
-    });
-
-    globalSocket.on("matchmaking_joined", ({ queueLength }) => {
-      console.log("✅ Joined matchmaking queue. Queue length:", queueLength);
     });
     
     console.log("✅ match_found listener REGISTERED\n");

@@ -82,8 +82,7 @@ export default function BattleRoom() {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5,
-      transports: ["websocket", "polling"]
+      reconnectionAttempts: 5
     });
     
     console.log("🔹 BattleRoom using socket.id:", socket.id, "roomId:", roomId);
