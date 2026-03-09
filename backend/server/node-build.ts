@@ -3,6 +3,7 @@ import { verifyMailerConnection } from "./config/mailer";
 import { createServer as createHttpServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { setupMultiplayer } from "./multiplayer";
+import { startEmailWorker, stopEmailWorker } from "./workers/emailWorker";
 
 function isOriginMatch(origin: string, allowedOrigin: string) {
   try {
@@ -28,6 +29,7 @@ function isOriginMatch(origin: string, allowedOrigin: string) {
 
 const app = createServer();
 const requestedPort = Number(process.env.PORT || 8082);
+const enableInProcessEmailWorker = process.env.ENABLE_IN_PROCESS_EMAIL_WORKER === "true";
 
 async function isBackendAlreadyRunning(targetPort: string | number) {
   try {
@@ -159,6 +161,17 @@ async function startServer() {
     .catch((error) => {
       console.error("❌ Background email service check failed:", error);
     });
+
+  if (enableInProcessEmailWorker) {
+    try {
+      startEmailWorker();
+      console.log("✅ In-process email worker enabled");
+    } catch (error) {
+      console.error("❌ Failed to start in-process email worker:", error);
+    }
+  } else {
+    console.log("ℹ️ In-process email worker is disabled (set ENABLE_IN_PROCESS_EMAIL_WORKER=true to enable)");
+  }
 }
 
 startServer();
@@ -166,10 +179,10 @@ startServer();
 // Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("🛑 Received SIGTERM, shutting down gracefully");
-  process.exit(0);
+  void stopEmailWorker().finally(() => process.exit(0));
 });
 
 process.on("SIGINT", () => {
   console.log("🛑 Received SIGINT, shutting down gracefully");
-  process.exit(0);
+  void stopEmailWorker().finally(() => process.exit(0));
 });

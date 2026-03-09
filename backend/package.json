@@ -10,8 +10,6 @@
     "dev": "tsx watch server/node-build.ts",
     "build": "tsc --noEmit",
     "start": "tsx server/node-build.ts",
-    "worker:email": "tsx server/workers/emailWorker.ts",
-    "start:worker:email": "tsx server/workers/emailWorker.ts",
     "typecheck": "tsc"
   },
   "dependencies": {
