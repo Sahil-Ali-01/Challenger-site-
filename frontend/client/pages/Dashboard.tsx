@@ -67,12 +67,31 @@ async function fetchWithFallback(path: string, init?: RequestInit): Promise<Resp
     .filter((v, i, a) => v !== undefined && a.indexOf(v) === i);
 
   for (const base of targets) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
     try {
-      const res = await fetch(`${base}${path}`, init);
+      const res = await fetch(`${base}${path}`, { ...(init || {}), signal: controller.signal });
       if (res.ok) return res;
     } catch { /* try next */ }
+    finally {
+      clearTimeout(timeout);
+    }
   }
   return null;
+}
+
+async function parseJsonSafely(response: Response) {
+  const raw = await response.text();
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 export default function Dashboard() {
@@ -102,85 +121,89 @@ export default function Dashboard() {
     }
 
     const loadData = async () => {
-      // 1. Fetch profile + leaderboard stats via /api/auth/me
-      const token = localStorage.getItem('jwtToken');
-      let loaded = false;
+      try {
+        // 1. Fetch profile + leaderboard stats via /api/auth/me
+        const token = localStorage.getItem('jwtToken');
+        let loaded = false;
 
-      if (token) {
-        const meRes = await fetchWithFallback('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        });
+        if (token) {
+          const meRes = await fetchWithFallback('/api/auth/me', {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          });
 
-        if (meRes) {
-          const payload = await meRes.json();
-          if (payload?.user) setUser(payload.user);
+          if (meRes) {
+            const payload = await parseJsonSafely(meRes);
+            if (payload?.user) setUser(payload.user);
 
-          const lb = payload?.leaderboard;
-          if (lb) {
-            setLbStats({
-              global_rank: lb.global_rank ?? null,
-              elo_rating: lb.elo_rating ?? 1200,
-              total_wins: lb.total_wins ?? 0,
-              total_losses: lb.total_losses ?? 0,
-              total_quizzes: lb.total_quizzes ?? ((lb.total_wins ?? 0) + (lb.total_losses ?? 0)),
-              correct_answers: lb.correct_answers ?? 0,
-              accuracy_percentage: lb.accuracy_percentage ?? 0,
-              total_points: lb.total_points ?? 0,
-              weekly_points: lb.weekly_points ?? 0,
-              streak: lb.streak ?? 0,
-              best_streak: lb.best_streak ?? 0,
-            });
-            loaded = true;
+            const lb = payload?.leaderboard;
+            if (lb) {
+              setLbStats({
+                global_rank: lb.global_rank ?? null,
+                elo_rating: lb.elo_rating ?? 1200,
+                total_wins: lb.total_wins ?? 0,
+                total_losses: lb.total_losses ?? 0,
+                total_quizzes: lb.total_quizzes ?? ((lb.total_wins ?? 0) + (lb.total_losses ?? 0)),
+                correct_answers: lb.correct_answers ?? 0,
+                accuracy_percentage: lb.accuracy_percentage ?? 0,
+                total_points: lb.total_points ?? 0,
+                weekly_points: lb.weekly_points ?? 0,
+                streak: lb.streak ?? 0,
+                best_streak: lb.best_streak ?? 0,
+              });
+              loaded = true;
+            }
           }
         }
-      }
 
-      // Fallback: fetch from public leaderboard
-      if (!loaded && userData?.id) {
-        const lbRes = await fetchWithFallback('/api/leaderboard');
-        if (lbRes) {
-          const payload = await lbRes.json();
-          const rows = payload?.data || [];
-          const mine = rows.find((r: any) => r?.id === userData.id);
-          if (mine) {
-            setLbStats({
-              global_rank: mine.rank ?? null,
-              elo_rating: mine.elo ?? 1200,
-              total_wins: mine.wins ?? 0,
-              total_losses: mine.losses ?? 0,
-              total_quizzes: (mine.wins ?? 0) + (mine.losses ?? 0),
-              correct_answers: mine.correct_answers ?? 0,
-              accuracy_percentage: mine.accuracy ?? 0,
-              total_points: mine.total_points ?? 0,
-              weekly_points: mine.weekly_points ?? 0,
-              streak: mine.streak ?? 0,
-              best_streak: mine.best_streak ?? 0,
-            });
+        // Fallback: fetch from public leaderboard
+        if (!loaded && userData?.id) {
+          const lbRes = await fetchWithFallback('/api/leaderboard');
+          if (lbRes) {
+            const payload = await parseJsonSafely(lbRes);
+            const rows = payload?.data || [];
+            const mine = rows.find((r: any) => r?.id === userData.id);
+            if (mine) {
+              setLbStats({
+                global_rank: mine.rank ?? null,
+                elo_rating: mine.elo ?? 1200,
+                total_wins: mine.wins ?? 0,
+                total_losses: mine.losses ?? 0,
+                total_quizzes: (mine.wins ?? 0) + (mine.losses ?? 0),
+                correct_answers: mine.correct_answers ?? 0,
+                accuracy_percentage: mine.accuracy ?? 0,
+                total_points: mine.total_points ?? 0,
+                weekly_points: mine.weekly_points ?? 0,
+                streak: mine.streak ?? 0,
+                best_streak: mine.best_streak ?? 0,
+              });
+            }
           }
         }
-      }
 
-      // 2. Fetch achievements from DB
-      if (userData?.id) {
-        const achRes = await fetchWithFallback(`/api/profile/${userData.id}/achievements`);
-        if (achRes) {
-          const payload = await achRes.json();
-          if (Array.isArray(payload?.achievements)) {
-            setAchievements(payload.achievements);
+        // 2. Fetch achievements from DB
+        if (userData?.id) {
+          const achRes = await fetchWithFallback(`/api/profile/${userData.id}/achievements`);
+          if (achRes) {
+            const payload = await parseJsonSafely(achRes);
+            if (Array.isArray(payload?.achievements)) {
+              setAchievements(payload.achievements);
+            }
           }
         }
-      }
 
-      // 3. Fetch top players for sidebar
-      const topRes = await fetchWithFallback('/api/leaderboard?limit=5');
-      if (topRes) {
-        const payload = await topRes.json();
-        if (Array.isArray(payload?.data)) {
-          setTopPlayers(payload.data.slice(0, 5));
+        // 3. Fetch top players for sidebar
+        const topRes = await fetchWithFallback('/api/leaderboard?limit=5');
+        if (topRes) {
+          const payload = await parseJsonSafely(topRes);
+          if (Array.isArray(payload?.data)) {
+            setTopPlayers(payload.data.slice(0, 5));
+          }
         }
+      } catch (error) {
+        console.error('Dashboard load failed:', error);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     };
 
     loadData();
