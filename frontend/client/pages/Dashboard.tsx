@@ -63,8 +63,13 @@ const defaultStats: LeaderboardStats = {
 /** Try relative URL first (Vite proxy in dev), then explicit backend URLs as fallback. */
 async function fetchWithFallback(path: string, init?: RequestInit): Promise<Response | null> {
   const apiBase = (import.meta.env.VITE_API_URL || '').trim();
-  const targets = ['', apiBase, 'http://localhost:8082', 'http://localhost:8083']
-    .filter((v, i, a) => v !== undefined && a.indexOf(v) === i);
+  if (import.meta.env.PROD && !apiBase) {
+    throw new Error('VITE_API_URL is not configured in production. Set it to your Render backend URL.');
+  }
+
+  const targets = [apiBase, '', 'http://localhost:8082', 'http://localhost:8083']
+    .filter((v, i, a) => v !== undefined && a.indexOf(v) === i)
+    .filter((v) => !(import.meta.env.PROD && (v === '' || v.startsWith('http://localhost'))));
 
   for (const base of targets) {
     const controller = new AbortController();
