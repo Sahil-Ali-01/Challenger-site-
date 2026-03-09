@@ -23,6 +23,7 @@ import { supabase } from '@/lib/supabase';
 
 export default function Leaderboard() {
   const MAX_VISIBLE_RANKERS = 50;
+  const apiUrl = (import.meta.env.VITE_API_URL || '').trim();
   const [activeTab, setActiveTab] = useState('all-time');
   const [searchQuery, setSearchQuery] = useState('');
   const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
@@ -55,6 +56,47 @@ export default function Leaderboard() {
   const fetchLeaderboard = useCallback(async () => {
     try {
       setLoading(true);
+
+      const fetchWithFallback = async (path: string, init?: RequestInit) => {
+        if (import.meta.env.PROD && !apiUrl) {
+          throw new Error('VITE_API_URL is not configured in production. Set it to your Render backend URL.');
+        }
+
+        const targets = [
+          apiUrl,
+          '',
+          'http://localhost:8082',
+          'http://localhost:8083',
+        ]
+          .filter((v, i, a) => v !== undefined && a.indexOf(v) === i)
+          .filter((v) => !(import.meta.env.PROD && (v === '' || v.startsWith('http://localhost'))));
+
+        let lastError: unknown = null;
+
+        for (const base of targets) {
+          try {
+            return await fetch(`${base}${path}`, init);
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        throw lastError || new Error('Failed to fetch');
+      };
+
+      const parseJsonSafely = async (response: Response) => {
+        const raw = await response.text();
+
+        if (!raw || !raw.trim()) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      };
       
       // Determine sort column based on active tab
       let sortColumn = 'elo_rating';
@@ -67,18 +109,18 @@ export default function Leaderboard() {
 
       // First try API endpoint
       console.log("📡 Calling /api/leaderboard endpoint...");
-      const apiResponse = await fetch(`/api/leaderboard?type=${encodeURIComponent(activeTab)}`);
-      const apiData = await apiResponse.json();
+      const apiResponse = await fetchWithFallback(`/api/leaderboard?type=${encodeURIComponent(activeTab)}`);
+      const apiData = await parseJsonSafely(apiResponse);
 
       console.log("✅ API Response:", {
-        success: apiData.success,
-        count: apiData.data?.length,
-        total: apiData.total,
-        firstItem: apiData.data?.[0],
-        error: apiData.error
+        success: apiData?.success,
+        count: apiData?.data?.length,
+        total: apiData?.total,
+        firstItem: apiData?.data?.[0],
+        error: apiData?.error
       });
 
-      if (apiData.success && apiData.data && apiData.data.length > 0) {
+      if (apiData?.success && apiData?.data && apiData.data.length > 0) {
         console.log(`✅ Got ${apiData.data.length} profiles from API`);
         
         const rows = apiData.data.map((profile: any, index: number) => ({
@@ -150,7 +192,7 @@ export default function Leaderboard() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab]);
+  }, [activeTab, apiUrl]);
 
   useEffect(() => {
     fetchLeaderboard();

@@ -19,7 +19,8 @@ import { cn } from '@/lib/utils';
 
 export default function Quiz() {
   const [searchParams] = useSearchParams();
-  const categoryParam = searchParams.get('category');
+  const categoryParam = searchParams.get('category')?.trim() || '';
+  const apiUrl = (import.meta.env.VITE_API_URL || '').trim();
   
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -33,6 +34,47 @@ export default function Quiz() {
     fetchQuestions();
   }, [categoryParam]);
 
+  const fetchWithFallback = async (path: string, init?: RequestInit) => {
+    if (import.meta.env.PROD && !apiUrl) {
+      throw new Error('VITE_API_URL is not configured in production. Set it to your Render backend URL.');
+    }
+
+    const targets = [
+      apiUrl,
+      '',
+      'http://localhost:8082',
+      'http://localhost:8083',
+    ]
+      .filter((v, i, a) => v !== undefined && a.indexOf(v) === i)
+      .filter((v) => !(import.meta.env.PROD && (v === '' || v.startsWith('http://localhost'))));
+
+    let lastError: unknown = null;
+
+    for (const base of targets) {
+      try {
+        return await fetch(`${base}${path}`, init);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Failed to fetch');
+  };
+
+  const parseJsonSafely = async (response: Response) => {
+    const raw = await response.text();
+
+    if (!raw || !raw.trim()) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+
   const fetchQuestions = async () => {
     try {
       setLoading(true);
@@ -42,11 +84,11 @@ export default function Quiz() {
       // Fetch database questions first (2 questions)
       try {
         console.log("📚 Fetching database questions...");
-        const categoryQuery = categoryParam ? `?category=${categoryParam}` : '';
-        const dbResponse = await fetch(`/api/questions${categoryQuery}`);
-        const dbData = await dbResponse.json();
+        const categoryQuery = categoryParam ? `?category=${encodeURIComponent(categoryParam)}` : '';
+        const dbResponse = await fetchWithFallback(`/api/questions${categoryQuery}`);
+        const dbData = await parseJsonSafely(dbResponse);
         
-        if (dbData.success && dbData.data) {
+        if (dbData?.success && dbData?.data) {
           console.log(`✅ Got ${dbData.data.length} database questions, taking first 2`);
           // Add only 2 database questions
           allQuestions = [...dbData.data.slice(0, 2)];
@@ -58,7 +100,7 @@ export default function Quiz() {
       // Then fetch AI questions (3 questions)
       try {
         console.log("🤖 Fetching AI questions...");
-        const aiResponse = await fetch('/api/questions/generate-multiple', {
+        const aiResponse = await fetchWithFallback('/api/questions/generate-multiple', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -68,8 +110,8 @@ export default function Quiz() {
           })
         });
         
-        const aiData = await aiResponse.json();
-        if (aiData.success && aiData.data) {
+        const aiData = await parseJsonSafely(aiResponse);
+        if (aiData?.success && aiData?.data) {
           console.log(`✅ Got ${aiData.data.length} AI questions`);
           allQuestions = [...allQuestions, ...aiData.data];
         }
@@ -144,7 +186,7 @@ export default function Quiz() {
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6 glass-card rounded-2xl max-w-2xl mx-auto">
           <Trophy className="w-16 h-16 text-muted-foreground mb-4 opacity-20" />
           <h2 className="text-2xl font-bold mb-2">No questions found</h2>
-          <p className="text-muted-foreground mb-6">We don't have questions for "{categoryParam}" yet.</p>
+          <p className="text-muted-foreground mb-6">We don't have questions for "{categoryParam || 'all categories'}" yet.</p>
           <Button asChild>
             <Link to="/quiz">Browse all categories</Link>
           </Button>
