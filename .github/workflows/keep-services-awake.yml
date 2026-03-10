@@ -77,6 +77,13 @@ jobs:
           vercel_url="$(pick_value "$VERCEL_FRONTEND_URL_INPUT" "$VERCEL_FRONTEND_URL_SECRET" "$VERCEL_FRONTEND_URL_VAR")"
           supabase_url="$(pick_value "$SUPABASE_URL_INPUT" "$SUPABASE_URL_SECRET" "$SUPABASE_URL_VAR")"
 
+          # The bare Supabase project URL returns 404; append the REST API root
+          # path which responds with 200 for a live project.
+          supabase_ping_url=""
+          if [ -n "$supabase_url" ]; then
+            supabase_ping_url="${supabase_url%/}/rest/v1/"
+          fi
+
           labels=(
             "Render backend"
             "Vercel frontend"
@@ -86,7 +93,7 @@ jobs:
           urls=(
             "$render_url"
             "$vercel_url"
-            "$supabase_url"
+            "$supabase_ping_url"
           )
 
           failures=0
