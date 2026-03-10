@@ -1,0 +1,97 @@
+name: Keep Services Awake
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC. "*/5 * * * *" means every 5 minutes.
+    # This is supported on the GitHub free plan for public repositories and
+    # for private repositories within Actions usage limits.
+    - cron: '*/5 * * * *'
+  # Allows manual runs from the GitHub Actions tab for testing or ad hoc checks.
+  workflow_dispatch:
+
+# Minimal permissions are enough because this workflow only reads configuration
+# and makes outbound HTTP requests.
+permissions:
+  contents: read
+
+jobs:
+  ping-services:
+    name: Ping hosted services
+    runs-on: ubuntu-latest
+    env:
+      # Keep endpoint values outside the workflow so URLs are not hardcoded.
+      # Each value can come from either a repository secret or a repository variable.
+      RENDER_HEALTH_URL_SECRET: ${{ secrets.RENDER_HEALTH_URL }}
+      RENDER_HEALTH_URL_VAR: ${{ vars.RENDER_HEALTH_URL }}
+      VERCEL_FRONTEND_URL_SECRET: ${{ secrets.VERCEL_FRONTEND_URL }}
+      VERCEL_FRONTEND_URL_VAR: ${{ vars.VERCEL_FRONTEND_URL }}
+      SUPABASE_URL_SECRET: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_URL_VAR: ${{ vars.SUPABASE_URL }}
+    steps:
+      - name: Ping configured endpoints
+        shell: bash
+        run: |
+          set +e
+
+          # Regular traffic helps reduce cold starts on free-tier platforms that
+          # scale services down after inactivity.
+
+          pick_value() {
+            local preferred="$1"
+            local fallback="$2"
+
+            if [ -n "$preferred" ]; then
+              printf '%s' "$preferred"
+            else
+              printf '%s' "$fallback"
+            fi
+          }
+
+          render_url="$(pick_value "$RENDER_HEALTH_URL_SECRET" "$RENDER_HEALTH_URL_VAR")"
+          vercel_url="$(pick_value "$VERCEL_FRONTEND_URL_SECRET" "$VERCEL_FRONTEND_URL_VAR")"
+          supabase_url="$(pick_value "$SUPABASE_URL_SECRET" "$SUPABASE_URL_VAR")"
+
+          labels=(
+            "Render backend"
+            "Vercel frontend"
+            "Supabase API"
+          )
+
+          urls=(
+            "$render_url"
+            "$vercel_url"
+            "$supabase_url"
+          )
+
+          failures=0
+
+          for i in "${!labels[@]}"; do
+            label="${labels[$i]}"
+            url="${urls[$i]}"
+
+            echo "Pinging ${label}..."
+
+            if [ -z "$url" ]; then
+              echo "::warning::${label} skipped because no URL is configured."
+              continue
+            fi
+
+            http_code="$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' --max-time 25 "$url")"
+            curl_exit_code=$?
+
+            if [ "$curl_exit_code" -eq 0 ] && [ "$http_code" -ge 200 ] && [ "$http_code" -lt 400 ]; then
+              echo "${label} responded with HTTP ${http_code}."
+              echo "SUCCESS: ${label} is reachable."
+            else
+              echo "${label} responded with HTTP ${http_code:-000}."
+              echo "FAILURE: ${label} ping failed, but the workflow will continue."
+              echo "::warning::${label} ping failed with curl exit code ${curl_exit_code} and HTTP status ${http_code:-000}."
+              failures=$((failures + 1))
+            fi
+
+            echo
+          done
+
+          # To add more endpoints later, append a new label and URL to the two
+          # arrays above and populate the matching secret or repository variable.
+          echo "Completed keep-awake checks with ${failures} failure(s)."
