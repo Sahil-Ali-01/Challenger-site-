@@ -7,7 +7,21 @@ on:
     # for private repositories within Actions usage limits.
     - cron: '*/5 * * * *'
   # Allows manual runs from the GitHub Actions tab for testing or ad hoc checks.
+  # URLs provided as inputs take precedence over repository secrets/variables.
   workflow_dispatch:
+    inputs:
+      render_health_url:
+        description: 'Render backend health URL (e.g. https://your-app.onrender.com/health). Overrides RENDER_HEALTH_URL secret/variable.'
+        required: false
+        default: ''
+      vercel_frontend_url:
+        description: 'Vercel frontend URL (e.g. https://your-app.vercel.app). Overrides VERCEL_FRONTEND_URL secret/variable.'
+        required: false
+        default: ''
+      supabase_url:
+        description: 'Supabase project URL (e.g. https://your-project.supabase.co). Overrides SUPABASE_URL secret/variable.'
+        required: false
+        default: ''
 
 # Minimal permissions are enough because this workflow only reads configuration
 # and makes outbound HTTP requests.
@@ -20,11 +34,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Keep endpoint values outside the workflow so URLs are not hardcoded.
-      # Each value can come from either a repository secret or a repository variable.
+      # Each value can come from a workflow_dispatch input, a repository secret,
+      # or a repository variable (checked in that order of priority).
+      # To configure for scheduled runs, add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL,
+      # and/or SUPABASE_URL as repository secrets (Settings → Secrets and variables →
+      # Actions → Secrets) or repository variables (Settings → Secrets and variables →
+      # Actions → Variables).
+      RENDER_HEALTH_URL_INPUT: ${{ inputs.render_health_url }}
       RENDER_HEALTH_URL_SECRET: ${{ secrets.RENDER_HEALTH_URL }}
       RENDER_HEALTH_URL_VAR: ${{ vars.RENDER_HEALTH_URL }}
+      VERCEL_FRONTEND_URL_INPUT: ${{ inputs.vercel_frontend_url }}
       VERCEL_FRONTEND_URL_SECRET: ${{ secrets.VERCEL_FRONTEND_URL }}
       VERCEL_FRONTEND_URL_VAR: ${{ vars.VERCEL_FRONTEND_URL }}
+      SUPABASE_URL_INPUT: ${{ inputs.supabase_url }}
       SUPABASE_URL_SECRET: ${{ secrets.SUPABASE_URL }}
       SUPABASE_URL_VAR: ${{ vars.SUPABASE_URL }}
     steps:
@@ -36,20 +58,24 @@ jobs:
           # Regular traffic helps reduce cold starts on free-tier platforms that
           # scale services down after inactivity.
 
+          # Priority order: workflow_dispatch input > repository secret > repository variable.
           pick_value() {
-            local preferred="$1"
-            local fallback="$2"
+            local input="$1"
+            local secret="$2"
+            local var="$3"
 
-            if [ -n "$preferred" ]; then
-              printf '%s' "$preferred"
+            if [ -n "$input" ]; then
+              printf '%s' "$input"
+            elif [ -n "$secret" ]; then
+              printf '%s' "$secret"
             else
-              printf '%s' "$fallback"
+              printf '%s' "$var"
             fi
           }
 
-          render_url="$(pick_value "$RENDER_HEALTH_URL_SECRET" "$RENDER_HEALTH_URL_VAR")"
-          vercel_url="$(pick_value "$VERCEL_FRONTEND_URL_SECRET" "$VERCEL_FRONTEND_URL_VAR")"
-          supabase_url="$(pick_value "$SUPABASE_URL_SECRET" "$SUPABASE_URL_VAR")"
+          render_url="$(pick_value "$RENDER_HEALTH_URL_INPUT" "$RENDER_HEALTH_URL_SECRET" "$RENDER_HEALTH_URL_VAR")"
+          vercel_url="$(pick_value "$VERCEL_FRONTEND_URL_INPUT" "$VERCEL_FRONTEND_URL_SECRET" "$VERCEL_FRONTEND_URL_VAR")"
+          supabase_url="$(pick_value "$SUPABASE_URL_INPUT" "$SUPABASE_URL_SECRET" "$SUPABASE_URL_VAR")"
 
           labels=(
             "Render backend"
@@ -74,7 +100,10 @@ jobs:
 
           # When no endpoints are configured, skip all checks and exit successfully.
           if [ "$configured_urls" -eq 0 ]; then
-            echo "::warning::No keep-awake URLs are configured. Add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL, and/or SUPABASE_URL as GitHub Actions secrets or variables to enable pinging."
+            echo "::warning::No keep-awake URLs are configured. To fix this, either:"
+            echo "::warning::  1. Run this workflow manually (workflow_dispatch) and supply URLs in the input fields, OR"
+            echo "::warning::  2. Add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL, and/or SUPABASE_URL as repository secrets"
+            echo "::warning::     (Settings → Secrets and variables → Actions → Secrets) for scheduled pinging."
             echo "No URLs configured – skipping keep-awake checks."
             exit 0
           fi
