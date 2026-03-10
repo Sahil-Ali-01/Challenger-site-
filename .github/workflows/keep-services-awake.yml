@@ -72,11 +72,11 @@ jobs:
             fi
           done
 
-          # Fail fast when no endpoints are configured so the run clearly signals
-          # a repository setup problem instead of looking like a successful check.
+          # When no endpoints are configured, skip all checks and exit successfully.
           if [ "$configured_urls" -eq 0 ]; then
-            echo "::error::No keep-awake URLs are configured. Add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL, and SUPABASE_URL as GitHub Actions secrets or variables."
-            exit 1
+            echo "::warning::No keep-awake URLs are configured. Add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL, and/or SUPABASE_URL as GitHub Actions secrets or variables to enable pinging."
+            echo "No URLs configured – skipping keep-awake checks."
+            exit 0
           fi
 
           for i in "${!labels[@]}"; do
