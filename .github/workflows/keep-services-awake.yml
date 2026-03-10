@@ -64,6 +64,20 @@ jobs:
           )
 
           failures=0
+          configured_urls=0
+
+          for url in "${urls[@]}"; do
+            if [ -n "$url" ]; then
+              configured_urls=$((configured_urls + 1))
+            fi
+          done
+
+          # Fail fast when no endpoints are configured so the run clearly signals
+          # a repository setup problem instead of looking like a successful check.
+          if [ "$configured_urls" -eq 0 ]; then
+            echo "::error::No keep-awake URLs are configured. Add RENDER_HEALTH_URL, VERCEL_FRONTEND_URL, and SUPABASE_URL as GitHub Actions secrets or variables."
+            exit 1
+          fi
 
           for i in "${!labels[@]}"; do
             label="${labels[$i]}"
