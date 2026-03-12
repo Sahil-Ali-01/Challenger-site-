@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { Question } from "@shared/api";
 import { supabase } from "./lib/db";
+import { getRandomFallbackQuestions } from "./lib/fallback-questions";
 
 // In-memory matchmaking queue
 let matchmakingQueue: string[] = [];
@@ -151,118 +152,50 @@ function finalizeRoomGame(
 }
 
 // Mock questions fallback
-const MOCK_QUESTIONS_FALLBACK: Question[] = [
-  {
-    id: '1',
-    category: 'javascript',
-    question: 'What is the output of `console.log(typeof NaN)`?',
-    options: ['"number"', '"NaN"', '"undefined"', '"object"'],
-    correctAnswer: 0,
-    explanation: 'In JavaScript, `NaN` (Not-a-Number) is a special value that belongs to the `number` type.'
-  },
-  {
-    id: '2',
-    category: 'python',
-    question: 'Which of the following is used to define a block of code in Python?',
-    options: ['Brackets', 'Parentheses', 'Indentation', 'Semicolons'],
-    correctAnswer: 2,
-    explanation: 'Python uses indentation to define code blocks.'
-  },
-  {
-    id: 'm1',
-    category: 'javascript',
-    question: 'What is the correct way to check if an array includes an element in ES6?',
-    options: ['arr.contains(el)', 'arr.exists(el)', 'arr.includes(el)', 'arr.has(el)'],
-    correctAnswer: 2,
-    explanation: '`Array.prototype.includes()` was introduced in ES2016 (ES7) and is the standard way to check if an array contains a value.'
-  },
-  {
-    id: 'm2',
-    category: 'python',
-    question: 'Which of these is a Python data type that is immutable?',
-    options: ['List', 'Dictionary', 'Set', 'Tuple'],
-    correctAnswer: 3,
-    explanation: 'Tuples are immutable sequences, while lists, dictionaries, and sets are mutable.'
-  },
-  {
-    id: 'm3',
-    category: 'system design',
-    question: 'What does the CAP theorem state?',
-    options: [
-      'Consistency, Availability, and Partition tolerance: pick two.',
-      'Caching, API, and Persistence are core for scale.',
-      'Capacity, Availability, and Performance: pick two.',
-      'Complexity, Architecture, and Patterns are related.'
-    ],
-    correctAnswer: 0,
-    explanation: 'The CAP theorem states that a distributed data store can only provide two out of three guarantees: Consistency, Availability, and Partition tolerance.'
-  }
-];
+// Fallback pool of 50 questions — imported from shared lib
 
-// Function to fetch questions (2 from DB + 3 from AI)
+// Function to fetch random AI-driven battle questions
 async function fetchBattleQuestions(): Promise<Question[]> {
   try {
-    let allQuestions: Question[] = [];
+    const randomCategory = ["programming", "javascript", "python", "algorithms", "system design"][Math.floor(Math.random() * 5)];
+    const randomDifficulty = ["easy", "medium", "hard"][Math.floor(Math.random() * 3)];
 
-    const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 5000) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
-    
-    // Fetch database questions first (2 questions)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
     try {
-      console.log("📚 [BATTLE] Fetching database questions...");
-      const dbResponse = await fetchWithTimeout(`${API_BASE_URL}/api/questions`);
-      const dbData = (await dbResponse.json()) as QuestionsApiResponse;
-      
-      if (dbData.success && dbData.data) {
-        console.log(`✅ [BATTLE] Got ${dbData.data.length} database questions, taking first 2`);
-        // Add only 2 database questions
-        allQuestions = [...dbData.data.slice(0, 2)];
-      }
-    } catch (dbErr) {
-      console.warn("⚠️  [BATTLE] Database questions failed:", dbErr);
-    }
-    
-    // Then fetch AI questions (3 questions)
-    try {
-      console.log("🤖 [BATTLE] Fetching AI questions...");
-      const aiResponse = await fetchWithTimeout(`${API_BASE_URL}/api/questions/generate-multiple`, {
+      console.log("🤖 [BATTLE] Fetching AI battle questions...");
+      const aiResponse = await fetch(`${API_BASE_URL}/api/questions/generate-multiple`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          category: 'programming',
-          difficulty: 'medium',
-          count: 3
-        })
+          category: randomCategory,
+          difficulty: randomDifficulty,
+          count: 5
+        }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       
       const aiData = (await aiResponse.json()) as QuestionsApiResponse;
-      if (aiData.success && aiData.data) {
+      if (aiData.success && aiData.data && aiData.data.length > 0) {
         console.log(`✅ [BATTLE] Got ${aiData.data.length} AI questions`);
-        allQuestions = [...allQuestions, ...aiData.data];
+        return aiData.data.sort(() => Math.random() - 0.5).slice(0, 5);
       }
-    } catch (aiErr) {
-      console.warn("⚠️  [BATTLE] AI questions failed, using database only:", aiErr);
+    } catch (aiErr: any) {
+      clearTimeout(timeoutId);
+      if (aiErr?.name === 'AbortError') {
+        console.warn('⚠️  [BATTLE] AI questions timed out (>6s), using 50-question fallback');
+      } else {
+        console.warn('⚠️  [BATTLE] AI questions failed, using 50-question fallback:', aiErr);
+      }
     }
-    
-    if (allQuestions.length > 0) {
-      // Shuffle questions
-      const shuffled = allQuestions.sort(() => Math.random() - 0.5);
-      console.log(`🎯 [BATTLE] Total questions: ${shuffled.length} (2 DB + 3 AI)`);
-      return shuffled;
-    } else {
-      console.error('[BATTLE] No questions available, using fallback');
-      return MOCK_QUESTIONS_FALLBACK;
-    }
+
+    console.log('[BATTLE] Using 50-question fallback pool');
+    return getRandomFallbackQuestions(5);
   } catch (err) {
     console.error('[BATTLE] Error fetching questions:', err);
-    return MOCK_QUESTIONS_FALLBACK;
+    return getRandomFallbackQuestions(5);
   }
 }
 

@@ -1,37 +1,78 @@
 import { RequestHandler } from "express";
 import { Question, User, ApiResponse } from "@shared/api";
 import { supabase } from "../lib/db";
+import { getRandomFallbackQuestions } from "../lib/fallback-questions";
 
-const MOCK_QUESTIONS: Question[] = [
-  {
-    id: '1',
-    category: 'javascript',
-    question: 'What is the output of `console.log(typeof NaN)`?',
-    options: ['"number"', '"NaN"', '"undefined"', '"object"'],
-    correctAnswer: 0,
-    explanation: 'In JavaScript, `NaN` (Not-a-Number) is a special value that belongs to the `number` type.'
-  },
-  {
-    id: '2',
-    category: 'python',
-    question: 'Which of the following is used to define a block of code in Python?',
-    options: ['Brackets', 'Parentheses', 'Indentation', 'Semicolons'],
-    correctAnswer: 2,
-    explanation: 'Python uses indentation to define code blocks.'
-  }
-];
+interface AiQuestionsResponse {
+  success?: boolean;
+  data?: Question[];
+}
 
-export const getQuestions: RequestHandler = (req, res) => {
-  const category = req.query.category as string;
-  let questions = MOCK_QUESTIONS;
-  
-  if (category) {
-    questions = MOCK_QUESTIONS.filter(q => q.category.toLowerCase() === category.toLowerCase());
+function shuffleQuestions<T>(items: T[]) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function getRandomItem<T>(items: T[]) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+export const getQuestions: RequestHandler = async (req, res) => {
+  const categoryRaw = String(req.query.category || "").trim();
+  const requestedCount = Number(req.query.count || 5);
+  const count = Number.isFinite(requestedCount)
+    ? Math.min(Math.max(requestedCount, 1), 15)
+    : 5;
+
+  const categoryPool = ["programming", "javascript", "python", "system design", "algorithms"];
+  const difficultyPool = ["easy", "medium", "hard"];
+
+  const category = categoryRaw || getRandomItem(categoryPool);
+  const difficulty = getRandomItem(difficultyPool);
+
+  try {
+    const internalApiBase =
+      process.env.INTERNAL_API_BASE_URL ||
+      process.env.API_BASE_URL ||
+      `http://localhost:${process.env.PORT || 8082}`;
+
+    // Timeout: fall back to JSON questions if AI doesn't respond within 8s
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    let aiResponse: Response | null = null;
+    try {
+      aiResponse = await fetch(`${internalApiBase}/api/questions/generate-multiple`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, difficulty, count }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const aiPayload = (await aiResponse.json().catch(() => null)) as AiQuestionsResponse | null;
+
+    if (aiResponse.ok && aiPayload?.success && Array.isArray(aiPayload?.data) && aiPayload.data.length > 0) {
+      console.log(`✅ [QUIZ] Got ${aiPayload.data.length} AI questions (category=${category}, difficulty=${difficulty})`);
+      return res.json({
+        success: true,
+        data: shuffleQuestions(aiPayload.data as Question[]).slice(0, count),
+      });
+    }
+
+    console.warn("⚠️ AI question endpoint returned invalid payload, using 50-question fallback");
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      console.warn("⚠️ AI question fetch timed out (>8s), using 50-question fallback");
+    } else {
+      console.warn("⚠️ AI question fetch failed, using 50-question fallback:", error);
+    }
   }
-  
+
   const response: ApiResponse<Question[]> = {
     success: true,
-    data: questions
+    data: getRandomFallbackQuestions(count),
   };
   res.json(response);
 };
