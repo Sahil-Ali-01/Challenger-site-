@@ -54,7 +54,11 @@ export function createServer() {
     "http://localhost:5173",
     "http://localhost:3000",
   ];
-  const defaultProdOrigins = ["https://challenger-site.vercel.app"];
+    const defaultProdOrigins = [
+      "https://challenger-site.vercel.app",
+      "https://challenger.biharicoder.com",
+      "https://*.vercel.app",
+    ];
   const configuredOrigins = (process.env.CORS_ORIGIN || "")
     .split(",")
     .map((origin) => origin.trim())
