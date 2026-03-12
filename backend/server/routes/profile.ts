@@ -7,6 +7,8 @@ interface UpdateProfileRequest {
   points?: number;
   questionId?: string;
   matchId?: string;
+  correctAnswers?: number;
+  attempts?: number;
 }
 
 interface UpdateProfileResponse {
@@ -17,6 +19,9 @@ interface UpdateProfileResponse {
     accuracy: number;
     elo_rating: number;
     weekly_points: number;
+    total_points: number;
+    total_quizzes: number;
+    correct_answers: number;
   };
   achievements?: any[];
   error?: string;
@@ -35,7 +40,15 @@ export const handleProfileUpdate: RequestHandler = async (req, res) => {
       return;
     }
 
-    const { userId, isCorrect, points = 10, questionId, matchId } = req.body as UpdateProfileRequest;
+    const {
+      userId,
+      isCorrect,
+      points = 10,
+      questionId,
+      matchId,
+      correctAnswers,
+      attempts,
+    } = req.body as UpdateProfileRequest;
 
     if (!userId) {
       res.status(400).json({ success: false, error: "userId is required" });
@@ -97,14 +110,25 @@ export const handleProfileUpdate: RequestHandler = async (req, res) => {
     const currentTotalPoints = leaderboardRow?.total_points ?? 0;
     const currentWeeklyPoints = leaderboardRow?.weekly_points ?? 0;
 
-    const newWins = currentWins + (isCorrect ? 1 : 0);
-    const newLosses = currentLosses + (isCorrect ? 0 : 1);
+    const normalizedAttempts = Number.isFinite(attempts)
+      ? Math.max(1, Math.floor(Number(attempts)))
+      : 1;
+    const normalizedCorrectAnswers = Number.isFinite(correctAnswers)
+      ? Math.min(normalizedAttempts, Math.max(0, Math.floor(Number(correctAnswers))))
+      : (isCorrect ? 1 : 0);
+    const normalizedPoints = Number.isFinite(points)
+      ? Math.max(0, Math.floor(Number(points)))
+      : (normalizedCorrectAnswers > 0 ? 10 : 0);
+    const derivedLosses = Math.max(0, normalizedAttempts - normalizedCorrectAnswers);
+
+    const newWins = currentWins + normalizedCorrectAnswers;
+    const newLosses = currentLosses + derivedLosses;
     const totalAttempts = newWins + newLosses;
     const newAccuracy = totalAttempts > 0 ? (newWins / totalAttempts) * 100 : 0;
-    const newTotalQuizzes = currentTotalQuizzes + 1;
-    const newCorrectAnswers = currentCorrectAnswers + (isCorrect ? 1 : 0);
-    const newTotalPoints = currentTotalPoints + (isCorrect ? points : 0);
-    const newWeeklyPoints = currentWeeklyPoints + (isCorrect ? points : 0);
+    const newTotalQuizzes = currentTotalQuizzes + normalizedAttempts;
+    const newCorrectAnswers = currentCorrectAnswers + normalizedCorrectAnswers;
+    const newTotalPoints = currentTotalPoints + normalizedPoints;
+    const newWeeklyPoints = currentWeeklyPoints + normalizedPoints;
 
     const { data: updatedLeaderboard, error: updateError } = await supabase
       .from("leaderboard")
@@ -189,6 +213,9 @@ export const handleProfileUpdate: RequestHandler = async (req, res) => {
         accuracy: updatedLeaderboard.accuracy_percentage,
         elo_rating: updatedLeaderboard.elo_rating,
         weekly_points: updatedLeaderboard.weekly_points,
+        total_points: updatedLeaderboard.total_points,
+        total_quizzes: updatedLeaderboard.total_quizzes,
+        correct_answers: updatedLeaderboard.correct_answers,
       },
       achievements,
     });

@@ -116,7 +116,7 @@ export default function Profile() {
 
       const { data, error: fetchError } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, name, username, email, created_at')
         .eq('username', profileUsername)
         .single();
 
@@ -136,13 +136,36 @@ export default function Profile() {
         return;
       }
 
-      setUserProfile(data);
+      const { data: leaderboardData, error: leaderboardError } = await supabase
+        .from('leaderboard')
+        .select('user_id, elo_rating, total_wins, total_losses, accuracy_percentage, total_points, weekly_points')
+        .eq('user_id', data.id)
+        .single();
+
+      if (leaderboardError && leaderboardError.code !== 'PGRST116') {
+        throw leaderboardError;
+      }
+
+      const mergedProfile: UserProfile = {
+        id: data.id,
+        username: data.username || data.email?.split('@')[0] || 'player',
+        full_name: data.name || data.username || data.email?.split('@')[0] || 'Player',
+        elo_rating: leaderboardData?.elo_rating ?? 1200,
+        weekly_points: leaderboardData?.weekly_points ?? 0,
+        wins: leaderboardData?.total_wins ?? 0,
+        losses: leaderboardData?.total_losses ?? 0,
+        accuracy: leaderboardData?.accuracy_percentage ?? 0,
+        total_points: leaderboardData?.total_points ?? 0,
+        created_at: data.created_at,
+      };
+
+      setUserProfile(mergedProfile);
       
       // Fetch global rank
       await fetchGlobalRank(data.id);
       
       // Calculate earned achievements
-      const earned = ACHIEVEMENTS.filter(ach => ach.condition(data));
+      const earned = ACHIEVEMENTS.filter(ach => ach.condition(mergedProfile));
       setEarnedAchievements(earned);
     } catch (err: any) {
       console.error('Profile fetch error:', err);

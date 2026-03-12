@@ -29,8 +29,20 @@ export default function Quiz() {
   const [showResults, setShowResults] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [resultsSynced, setResultsSynced] = useState(false);
 
   useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        if (parsed?.id) {
+          setCurrentUserId(parsed.id);
+        }
+      } catch {}
+    }
+
     fetchQuestions();
   }, [categoryParam]);
 
@@ -78,51 +90,18 @@ export default function Quiz() {
   const fetchQuestions = async () => {
     try {
       setLoading(true);
-      
-      let allQuestions: Question[] = [];
-      
-      // Fetch database questions first (2 questions)
-      try {
-        console.log("📚 Fetching database questions...");
-        const categoryQuery = categoryParam ? `?category=${encodeURIComponent(categoryParam)}` : '';
-        const dbResponse = await fetchWithFallback(`/api/questions${categoryQuery}`);
-        const dbData = await parseJsonSafely(dbResponse);
-        
-        if (dbData?.success && dbData?.data) {
-          console.log(`✅ Got ${dbData.data.length} database questions, taking first 2`);
-          // Add only 2 database questions
-          allQuestions = [...dbData.data.slice(0, 2)];
-        }
-      } catch (dbErr) {
-        console.warn("⚠️  Database questions failed:", dbErr);
+      const query = new URLSearchParams();
+      query.set('count', '5');
+      if (categoryParam) {
+        query.set('category', categoryParam);
       }
-      
-      // Then fetch AI questions (3 questions)
-      try {
-        console.log("🤖 Fetching AI questions...");
-        const aiResponse = await fetchWithFallback('/api/questions/generate-multiple', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            category: categoryParam || 'programming',
-            difficulty: 'medium',
-            count: 3
-          })
-        });
-        
-        const aiData = await parseJsonSafely(aiResponse);
-        if (aiData?.success && aiData?.data) {
-          console.log(`✅ Got ${aiData.data.length} AI questions`);
-          allQuestions = [...allQuestions, ...aiData.data];
-        }
-      } catch (aiErr) {
-        console.warn("⚠️  AI questions failed, using database only:", aiErr);
-      }
-      
-      if (allQuestions.length > 0) {
-        // Shuffle questions
-        setQuestions(allQuestions.sort(() => Math.random() - 0.5));
-        console.log(`🎯 Total questions: ${allQuestions.length} (2 DB + 3 AI)`);
+
+      const response = await fetchWithFallback(`/api/questions?${query.toString()}`);
+      const payload = await parseJsonSafely(response);
+
+      if (payload?.success && Array.isArray(payload?.data) && payload.data.length > 0) {
+        setQuestions(payload.data);
+        console.log(`🎯 Loaded ${payload.data.length} AI questions`);
       } else {
         console.error('No questions available');
         setQuestions([]);
@@ -135,6 +114,71 @@ export default function Quiz() {
     }
   }
 
+  const publishProfileStatsUpdate = (payload: {
+    wins: number;
+    losses: number;
+    elo_rating?: number;
+    total_points?: number;
+    weekly_points?: number;
+    total_quizzes?: number;
+    accuracy_percentage?: number;
+    correct_answers?: number;
+  }) => {
+    try {
+      localStorage.setItem('latestLeaderboardStats', JSON.stringify({
+        ...payload,
+        updatedAt: Date.now(),
+      }));
+      window.dispatchEvent(new CustomEvent('profile:stats-updated', { detail: payload }));
+    } catch (error) {
+      console.error('Failed to publish profile stats update event:', error);
+    }
+  };
+
+  const syncQuizResults = async () => {
+    if (!currentUserId || resultsSynced || questions.length === 0) {
+      return;
+    }
+
+    try {
+      const correctAnswers = Math.floor(score / 10);
+      const response = await fetchWithFallback('/api/profile/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUserId,
+          isCorrect: correctAnswers > 0,
+          correctAnswers,
+          attempts: questions.length,
+          points: score,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorPayload = await parseJsonSafely(response);
+        throw new Error(errorPayload?.error || `Profile sync failed with status ${response.status}`);
+      }
+
+      const payload = await parseJsonSafely(response);
+      if (payload?.success && payload?.newStats) {
+        publishProfileStatsUpdate({
+          wins: payload.newStats.wins ?? 0,
+          losses: payload.newStats.losses ?? 0,
+          elo_rating: payload.newStats.elo_rating ?? 1200,
+          total_points: payload.newStats.total_points ?? 0,
+          weekly_points: payload.newStats.weekly_points ?? 0,
+          total_quizzes: payload.newStats.total_quizzes ?? 0,
+          accuracy_percentage: payload.newStats.accuracy ?? 0,
+          correct_answers: payload.newStats.correct_answers ?? 0,
+        });
+      }
+
+      setResultsSynced(true);
+    } catch (error) {
+      console.warn('Failed to sync quiz results to profile:', error);
+    }
+  };
+
   const currentQuestion = questions[currentQuestionIndex];
 
   const handleOptionSelect = (index: number) => {
@@ -146,7 +190,8 @@ export default function Quiz() {
     if (selectedOption === null || isAnswered) return;
     
     setIsAnswered(true);
-    if (selectedOption === currentQuestion.correctAnswer) {
+    const isCorrect = selectedOption === currentQuestion.correctAnswer;
+    if (isCorrect) {
       setScore(s => s + 10);
     }
   };
@@ -161,13 +206,20 @@ export default function Quiz() {
     }
   };
 
+  useEffect(() => {
+    if (showResults) {
+      void syncQuizResults();
+    }
+  }, [showResults]);
+
   const resetQuiz = () => {
     setCurrentQuestionIndex(0);
     setSelectedOption(null);
     setIsAnswered(false);
     setScore(0);
     setShowResults(false);
-    setQuestions(q => [...q].sort(() => Math.random() - 0.5));
+    setResultsSynced(false);
+    void fetchQuestions();
   };
 
   if (loading) {

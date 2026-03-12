@@ -60,6 +60,30 @@ const defaultStats: LeaderboardStats = {
   best_streak: 0,
 };
 
+function mergeLeaderboardStats(
+  previous: LeaderboardStats,
+  incoming: Partial<LeaderboardStats> & { wins?: number; losses?: number; accuracy?: number }
+): LeaderboardStats {
+  return {
+    ...previous,
+    global_rank: incoming.global_rank ?? previous.global_rank,
+    elo_rating: incoming.elo_rating ?? previous.elo_rating,
+    total_wins: incoming.total_wins ?? incoming.wins ?? previous.total_wins,
+    total_losses: incoming.total_losses ?? incoming.losses ?? previous.total_losses,
+    total_quizzes:
+      incoming.total_quizzes ??
+      ((incoming.total_wins ?? incoming.wins) !== undefined || (incoming.total_losses ?? incoming.losses) !== undefined
+        ? (incoming.total_wins ?? incoming.wins ?? previous.total_wins) + (incoming.total_losses ?? incoming.losses ?? previous.total_losses)
+        : previous.total_quizzes),
+    correct_answers: incoming.correct_answers ?? previous.correct_answers,
+    accuracy_percentage: incoming.accuracy_percentage ?? incoming.accuracy ?? previous.accuracy_percentage,
+    total_points: incoming.total_points ?? previous.total_points,
+    weekly_points: incoming.weekly_points ?? previous.weekly_points,
+    streak: incoming.streak ?? previous.streak,
+    best_streak: incoming.best_streak ?? previous.best_streak,
+  };
+}
+
 /** Try relative URL first (Vite proxy in dev), then explicit backend URLs as fallback. */
 async function fetchWithFallback(path: string, init?: RequestInit): Promise<Response | null> {
   const apiBase = (import.meta.env.VITE_API_URL || '').trim();
@@ -106,6 +130,33 @@ export default function Dashboard() {
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [topPlayers, setTopPlayers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const cached = localStorage.getItem('latestLeaderboardStats');
+    if (!cached) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(cached);
+      setLbStats((prev) => mergeLeaderboardStats(prev, payload));
+    } catch (error) {
+      console.error('Failed to parse latestLeaderboardStats cache:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onStatsUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const payload = customEvent.detail || {};
+      setLbStats((prev) => mergeLeaderboardStats(prev, payload));
+    };
+
+    window.addEventListener('profile:stats-updated', onStatsUpdated as EventListener);
+    return () => {
+      window.removeEventListener('profile:stats-updated', onStatsUpdated as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     const isLoggedIn = localStorage.getItem('isLoggedIn');
