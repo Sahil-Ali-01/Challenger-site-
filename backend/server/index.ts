@@ -63,10 +63,10 @@ export function createServer() {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-  const allowedOrigins =
-    process.env.NODE_ENV === "development"
-      ? Array.from(new Set([...defaultDevOrigins, ...configuredOrigins]))
-      : Array.from(new Set([...defaultProdOrigins, ...configuredOrigins]));
+  // Keep both local and deployed origins allowed to avoid breakage from NODE_ENV misconfiguration.
+  const allowedOrigins = Array.from(
+    new Set([...defaultDevOrigins, ...defaultProdOrigins, ...configuredOrigins]),
+  );
 
   app.use(
     cors({
