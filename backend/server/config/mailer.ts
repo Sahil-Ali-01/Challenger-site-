@@ -23,7 +23,7 @@ if (!smtpPass) {
 }
 
 // Initialize Nodemailer transporter
-const transporter = nodemailer.createTransport({
+const primaryTransporter = nodemailer.createTransport({
   host: smtpHost,
   port: smtpPort,
   secure: smtpSecure, // true for 465, false for other ports
@@ -36,6 +36,58 @@ const transporter = nodemailer.createTransport({
   greetingTimeout: 15000,
   socketTimeout: 20000,
 });
+
+const shouldUseResendFallback =
+  smtpHost === "smtp.resend.com" && smtpPort !== 465;
+
+const fallbackTransporter = shouldUseResendFallback
+  ? nodemailer.createTransport({
+      host: smtpHost,
+      port: 465,
+      secure: true,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+    })
+  : null;
+
+const transporter = {
+  async sendMail(mailOptions: Parameters<typeof primaryTransporter.sendMail>[0]) {
+    try {
+      return await primaryTransporter.sendMail(mailOptions);
+    } catch (error: any) {
+      const isTimeout = String(error?.code || "").toUpperCase() === "ETIMEDOUT";
+
+      if (!fallbackTransporter || !isTimeout) {
+        throw error;
+      }
+
+      console.warn("⚠️ Primary SMTP connection timed out; retrying with Resend SMTPS fallback (465)");
+      return fallbackTransporter.sendMail(mailOptions);
+    }
+  },
+
+  async verify() {
+    try {
+      await primaryTransporter.verify();
+      return true;
+    } catch (error: any) {
+      const isTimeout = String(error?.code || "").toUpperCase() === "ETIMEDOUT";
+
+      if (!fallbackTransporter || !isTimeout) {
+        throw error;
+      }
+
+      console.warn("⚠️ Primary SMTP verify timed out; trying Resend SMTPS fallback (465)");
+      await fallbackTransporter.verify();
+      return true;
+    }
+  },
+};
 
 // Verify connection on startup
 export async function verifyMailerConnection() {

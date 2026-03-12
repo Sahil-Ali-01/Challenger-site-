@@ -59,7 +59,7 @@ export function startEmailWorker() {
           const data = job.data as WelcomeEmailJobData;
           const sent = await sendWelcomeEmail(data.email, data.userName);
           if (!sent) {
-            throw new Error("Failed to send welcome email");
+            console.warn(`⚠️ Welcome email skipped/failed for ${data.email} (non-critical)`);
           }
           break;
         }
@@ -68,7 +68,7 @@ export function startEmailWorker() {
           const data = job.data as AdminNewUserEmailJobData;
           const sent = await sendAdminNewUserRegistrationEmail(data.userName, data.email, data.userId);
           if (!sent) {
-            throw new Error("Failed to send admin new user email");
+            console.warn(`⚠️ Admin notification email skipped/failed for ${data.email} (non-critical)`);
           }
           break;
         }
