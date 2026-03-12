@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "tsx watch server/node-build.ts",
+    "dev:worker:email": "tsx watch server/workers/emailWorker.ts",
     "build": "tsc --noEmit",
     "start": "tsx server/node-build.ts",
+    "start:worker:email": "tsx server/workers/emailWorker.ts",
     "typecheck": "tsc"
   },
   "dependencies": {

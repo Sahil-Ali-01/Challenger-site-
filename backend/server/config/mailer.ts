@@ -31,6 +31,10 @@ const transporter = nodemailer.createTransport({
     user: smtpUser,
     pass: smtpPass,
   },
+  // Prevent jobs from hanging indefinitely on provider/network stalls.
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 20000,
 });
 
 // Verify connection on startup

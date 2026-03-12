@@ -42,55 +42,153 @@ export const handleProfileUpdate: RequestHandler = async (req, res) => {
       return;
     }
 
-    // Get current profile
-    const { data: profile, error: fetchError } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("*")
+      .select("id,name,email")
       .eq("id", userId)
       .single();
 
-    if (fetchError || !profile) {
+    if (profileError || !profile) {
       res.status(404).json({ success: false, error: "Profile not found" });
       return;
     }
 
-    // Update stats
-    const newWins = profile.wins + (isCorrect ? 1 : 0);
-    const newLosses = profile.losses + (isCorrect ? 0 : 1);
+    const { data: leaderboardRow, error: leaderboardFetchError } = await supabase
+      .from("leaderboard")
+      .select("user_id, elo_rating, total_wins, total_losses, total_quizzes, correct_answers, accuracy_percentage, total_points, weekly_points, daily_points, streak")
+      .eq("user_id", userId)
+      .single();
+
+    if (leaderboardFetchError && leaderboardFetchError.code !== "PGRST116") {
+      res.status(500).json({ success: false, error: "Failed to load leaderboard stats" });
+      return;
+    }
+
+    // If missing, create a default leaderboard row to keep profile updates consistent.
+    if (!leaderboardRow) {
+      const { error: createLeaderboardError } = await supabase
+        .from("leaderboard")
+        .insert({
+          user_id: userId,
+          elo_rating: 1200,
+          total_wins: 0,
+          total_losses: 0,
+          total_quizzes: 0,
+          correct_answers: 0,
+          accuracy_percentage: 0,
+          total_points: 0,
+          weekly_points: 0,
+          daily_points: 0,
+          streak: 0,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (createLeaderboardError) {
+        res.status(500).json({ success: false, error: "Failed to initialize leaderboard stats" });
+        return;
+      }
+    }
+
+    const currentWins = leaderboardRow?.total_wins ?? 0;
+    const currentLosses = leaderboardRow?.total_losses ?? 0;
+    const currentTotalQuizzes = leaderboardRow?.total_quizzes ?? 0;
+    const currentCorrectAnswers = leaderboardRow?.correct_answers ?? 0;
+    const currentElo = leaderboardRow?.elo_rating ?? 1200;
+    const currentTotalPoints = leaderboardRow?.total_points ?? 0;
+    const currentWeeklyPoints = leaderboardRow?.weekly_points ?? 0;
+
+    const newWins = currentWins + (isCorrect ? 1 : 0);
+    const newLosses = currentLosses + (isCorrect ? 0 : 1);
     const totalAttempts = newWins + newLosses;
     const newAccuracy = totalAttempts > 0 ? (newWins / totalAttempts) * 100 : 0;
-    const newWeeklyPoints = profile.weekly_points + (isCorrect ? points : 0);
+    const newTotalQuizzes = currentTotalQuizzes + 1;
+    const newCorrectAnswers = currentCorrectAnswers + (isCorrect ? 1 : 0);
+    const newTotalPoints = currentTotalPoints + (isCorrect ? points : 0);
+    const newWeeklyPoints = currentWeeklyPoints + (isCorrect ? points : 0);
 
-    // Update profile in database
-    const { data: updatedProfile, error: updateError } = await supabase
-      .from("profiles")
+    const { data: updatedLeaderboard, error: updateError } = await supabase
+      .from("leaderboard")
       .update({
-        wins: newWins,
-        losses: newLosses,
-        accuracy: newAccuracy,
+        total_wins: newWins,
+        total_losses: newLosses,
+        total_quizzes: newTotalQuizzes,
+        correct_answers: newCorrectAnswers,
+        accuracy_percentage: newAccuracy,
+        elo_rating: currentElo,
+        total_points: newTotalPoints,
         weekly_points: newWeeklyPoints,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", userId)
+      .eq("user_id", userId)
       .select()
       .single();
 
-    if (updateError || !updatedProfile) {
+    if (updateError || !updatedLeaderboard) {
       res.status(500).json({ success: false, error: "Failed to update profile" });
       return;
     }
 
+    // Keep user_stats in sync for parts of the app reading this table.
+    const { data: userStatsRow, error: userStatsFetchError } = await supabase
+      .from("user_stats")
+      .select("id")
+      .eq("id", userId)
+      .single();
+
+    if (!userStatsRow && (!userStatsFetchError || userStatsFetchError.code === "PGRST116")) {
+      const { error: createUserStatsError } = await supabase
+        .from("user_stats")
+        .insert({
+          id: userId,
+          name: profile.name,
+          elo_rating: currentElo,
+          total_wins: 0,
+          total_losses: 0,
+          total_quizzes: 0,
+          accuracy_percentage: 0,
+          quizzes_completed: 0,
+          avg_accuracy: 0,
+        });
+
+      if (createUserStatsError) {
+        console.warn("Failed to create user_stats row during profile update:", createUserStatsError.message);
+      }
+    }
+
+    const { error: userStatsUpdateError } = await supabase
+      .from("user_stats")
+      .update({
+        name: profile.name,
+        total_wins: newWins,
+        total_losses: newLosses,
+        total_quizzes: newTotalQuizzes,
+        quizzes_completed: newTotalQuizzes,
+        accuracy_percentage: newAccuracy,
+        avg_accuracy: newAccuracy,
+        elo_rating: currentElo,
+      })
+      .eq("id", userId);
+
+    if (userStatsUpdateError) {
+      console.warn("Failed to sync user_stats during profile update:", userStatsUpdateError.message);
+    }
+
     // Calculate earned achievements
-    const achievements = calculateAchievements(updatedProfile);
+    const achievements = calculateAchievements({
+      wins: newWins,
+      losses: newLosses,
+      accuracy: newAccuracy,
+      elo_rating: currentElo,
+    });
 
     res.json({
       success: true,
       newStats: {
-        wins: updatedProfile.wins,
-        losses: updatedProfile.losses,
-        accuracy: updatedProfile.accuracy,
-        elo_rating: updatedProfile.elo_rating,
-        weekly_points: updatedProfile.weekly_points,
+        wins: updatedLeaderboard.total_wins,
+        losses: updatedLeaderboard.total_losses,
+        accuracy: updatedLeaderboard.accuracy_percentage,
+        elo_rating: updatedLeaderboard.elo_rating,
+        weekly_points: updatedLeaderboard.weekly_points,
       },
       achievements,
     });
@@ -113,20 +211,25 @@ export const handleGetAchievements: RequestHandler = async (req, res) => {
 
     const { userId } = req.params;
 
-    // Get profile
-    const { data: profile, error: fetchError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
+    // Get leaderboard stats used for achievement computation.
+    const { data: leaderboardStats, error: fetchError } = await supabase
+      .from("leaderboard")
+      .select("user_id,total_wins,total_losses,accuracy_percentage,elo_rating")
+      .eq("user_id", userId)
       .single();
 
-    if (fetchError || !profile) {
+    if (fetchError || !leaderboardStats) {
       res.status(404).json({ error: "Profile not found" });
       return;
     }
 
     // Calculate achievements
-    const achievements = calculateAchievements(profile);
+    const achievements = calculateAchievements({
+      wins: leaderboardStats.total_wins ?? 0,
+      losses: leaderboardStats.total_losses ?? 0,
+      accuracy: leaderboardStats.accuracy_percentage ?? 0,
+      elo_rating: leaderboardStats.elo_rating ?? 1200,
+    });
 
     res.json({
       achievements,

@@ -7,6 +7,22 @@ let matchmakingQueue: string[] = [];
 // Active rooms mapping roomId -> game data
 const gameRooms: Record<string, GameRoom> = {};
 const API_BASE_URL = process.env.INTERNAL_API_BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
+let userStatsEmailColumnAvailable: boolean | null = null;
+
+async function hasUserStatsEmailColumn() {
+  if (userStatsEmailColumnAvailable !== null) {
+    return userStatsEmailColumnAvailable;
+  }
+
+  const { error } = await supabase.from("user_stats").select("email").limit(1);
+  if (error && String(error.message || "").includes("does not exist")) {
+    userStatsEmailColumnAvailable = false;
+  } else {
+    userStatsEmailColumnAvailable = true;
+  }
+
+  return userStatsEmailColumnAvailable;
+}
 
 interface Player {
   id: string;
@@ -627,20 +643,26 @@ async function updatePlayerProfiles(
     if (!statsRow) {
       console.log("⚠️ user_stats row missing, creating default row...");
 
+      const shouldPersistStatsEmail = await hasUserStatsEmailColumn();
+      const statsInsertPayload: any = {
+        id: player.userId,
+        name: profileRow?.name || player.username || "Player",
+        elo_rating: 1200,
+        total_wins: 0,
+        total_losses: 0,
+        total_quizzes: 0,
+        accuracy_percentage: 0,
+        quizzes_completed: 0,
+        avg_accuracy: 0,
+      };
+
+      if (shouldPersistStatsEmail) {
+        statsInsertPayload.email = profileRow?.email || "";
+      }
+
       const { error: statsCreateError } = await supabase
         .from("user_stats")
-        .insert({
-          id: player.userId,
-          name: profileRow?.name || player.username || "Player",
-          email: profileRow?.email || "",
-          elo_rating: 1200,
-          total_wins: 0,
-          total_losses: 0,
-          total_quizzes: 0,
-          accuracy_percentage: 0,
-          quizzes_completed: 0,
-          avg_accuracy: 0,
-        });
+        .insert(statsInsertPayload);
 
       if (statsCreateError) {
         console.error("❌ Failed to create user_stats row:", statsCreateError);

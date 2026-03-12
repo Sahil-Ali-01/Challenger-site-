@@ -6,10 +6,10 @@ import {
   sendEmail,
 } from "../services/emailService";
 import {
-  enqueueVerificationEmailJob,
-  enqueuePasswordResetEmailJob,
-  enqueueWelcomeEmailJob,
-  enqueueAdminNewUserEmailJob,
+  deliverAdminNewUserEmail,
+  deliverPasswordResetEmail,
+  deliverVerificationEmail,
+  deliverWelcomeEmail,
 } from "../services/emailQueueService";
 import { randomUUID } from "crypto";
 
@@ -17,34 +17,17 @@ const router = Router();
 
 const USERNAME_MAX_LENGTH = 24;
 let usernameColumnAvailable: boolean | null = null;
-
-function sendVerificationEmailInBackground(email: string, name: string, token: string) {
-  void enqueueVerificationEmailJob({
-    email,
-    userName: name,
-    verificationToken: token,
-  })
-    .then((sent) => {
-      if (sent) {
-        console.log(`✅ Verification email job queued for ${email}`);
-      } else {
-        console.warn(`⚠️ Verification email job enqueue failed for ${email}`);
-      }
-    })
-    .catch((error) => {
-      console.error(`❌ Verification email background error for ${email}:`, error);
-    });
-}
+let userStatsEmailColumnAvailable: boolean | null = null;
 
 function sendAdminRegistrationEmailInBackground(name: string, email: string, userId: string) {
-  void enqueueAdminNewUserEmailJob({
+  void deliverAdminNewUserEmail({
     email,
     userName: name,
     userId,
   })
     .then((sent) => {
       if (sent) {
-        console.log(`✅ Admin notification email job queued for new user ${email}`);
+        console.log(`✅ Admin notification email dispatched for new user ${email}`);
       } else {
         console.warn(`⚠️ Admin notification email skipped/failed for new user ${email}`);
       }
@@ -67,6 +50,21 @@ async function hasUsernameColumn() {
   }
 
   return usernameColumnAvailable;
+}
+
+async function hasUserStatsEmailColumn() {
+  if (userStatsEmailColumnAvailable !== null) {
+    return userStatsEmailColumnAvailable;
+  }
+
+  const { error } = await supabase.from("user_stats").select("email").limit(1);
+  if (error && String(error.message || "").includes("does not exist")) {
+    userStatsEmailColumnAvailable = false;
+  } else {
+    userStatsEmailColumnAvailable = true;
+  }
+
+  return userStatsEmailColumnAvailable;
 }
 
 function slugifyUsername(input: string) {
@@ -185,7 +183,7 @@ router.post("/register", async (req: Request, res: Response) => {
         let emailSent = false;
         try {
           const verificationToken = generateToken(email, existingUser.id, "email_verification", "24h");
-          emailSent = await enqueueVerificationEmailJob({
+          emailSent = await deliverVerificationEmail({
             email,
             userName: name,
             verificationToken,
@@ -246,22 +244,26 @@ router.post("/register", async (req: Request, res: Response) => {
 
     // Create user_stats entry with initial stats
     console.log("📊 Creating user_stats entry...");
+    const shouldPersistStatsEmail = await hasUserStatsEmailColumn();
+    const userStatsInsertPayload: any = {
+      id: userId,
+      name,
+      elo_rating: 1200,
+      total_wins: 0,
+      total_losses: 0,
+      total_quizzes: 0,
+      accuracy_percentage: 0,
+      quizzes_completed: 0,
+      avg_accuracy: 0,
+    };
+
+    if (shouldPersistStatsEmail) {
+      userStatsInsertPayload.email = email;
+    }
+
     const { error: statsError } = await supabase
       .from("user_stats")
-      .insert([
-        {
-          id: userId,
-          name,
-          email,
-          elo_rating: 1200,
-          total_wins: 0,
-          total_losses: 0,
-          total_quizzes: 0,
-          accuracy_percentage: 0,
-          quizzes_completed: 0,
-          avg_accuracy: 0,
-        },
-      ])
+      .insert([userStatsInsertPayload])
       .select()
       .single();
 
@@ -304,11 +306,14 @@ router.post("/register", async (req: Request, res: Response) => {
       console.log("🔐 Generating verification token...");
       const verificationToken = generateToken(email, userId, "email_verification", "24h");
       console.log("✅ Token generated");
-      console.log("📧 Queueing verification email for", email);
-      sendVerificationEmailInBackground(email, name, verificationToken);
+      console.log("📧 Dispatching verification email for", email);
+      emailSent = await deliverVerificationEmail({
+        email,
+        userName: name,
+        verificationToken,
+      });
       console.log("📧 Queueing admin registration notification for", email);
       sendAdminRegistrationEmailInBackground(name, email, userId);
-      emailSent = true;
     } catch (tokenError) {
       console.error("❌ Failed to queue verification email:", tokenError);
     }
@@ -387,20 +392,26 @@ router.get("/verify-email", async (req: Request, res: Response) => {
 
     if (!statsCheck) {
       console.log("📊 Creating user_stats entry (backup)...");
+      const shouldPersistStatsEmail = await hasUserStatsEmailColumn();
+      const userStatsInsertPayload: any = {
+        id: decoded.userId,
+        name: updateData.name,
+        elo_rating: 1200,
+        total_wins: 0,
+        total_losses: 0,
+        total_quizzes: 0,
+        accuracy_percentage: 0,
+        quizzes_completed: 0,
+        avg_accuracy: 0,
+      };
+
+      if (shouldPersistStatsEmail) {
+        userStatsInsertPayload.email = updateData.email;
+      }
+
       const { error: statsCreateError } = await supabase
         .from("user_stats")
-        .insert([{
-          id: decoded.userId,
-          name: updateData.name,
-          email: updateData.email,
-          elo_rating: 1200,
-          total_wins: 0,
-          total_losses: 0,
-          total_quizzes: 0,
-          accuracy_percentage: 0,
-          quizzes_completed: 0,
-          avg_accuracy: 0,
-        }]);
+        .insert([userStatsInsertPayload]);
 
       if (statsCreateError) {
         console.warn("⚠️  user_stats entry creation failed:", statsCreateError);
@@ -444,8 +455,8 @@ router.get("/verify-email", async (req: Request, res: Response) => {
     }
 
     // Queue welcome email without blocking successful verification.
-    console.log("📧 Queueing welcome email...");
-    void enqueueWelcomeEmailJob({
+    console.log("📧 Dispatching welcome email...");
+    void deliverWelcomeEmail({
       email: decoded.email,
       userName: updateData.name,
     });
@@ -508,7 +519,7 @@ router.post("/resend-verification-email", async (req: Request, res: Response) =>
     const verificationToken = generateToken(email, user.id, "email_verification", "24h");
 
     // Queue verification email
-    const emailSent = await enqueueVerificationEmailJob({
+    const emailSent = await deliverVerificationEmail({
       email,
       userName: user.name,
       verificationToken,
@@ -558,7 +569,7 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     const resetToken = generateToken(email, user.id, "password_reset", "1h");
 
     // Queue password reset email
-    const emailSent = await enqueuePasswordResetEmailJob({
+    const emailSent = await deliverPasswordResetEmail({
       email,
       userName: user.name,
       resetToken,
@@ -915,9 +926,15 @@ router.get("/me", async (req: Request, res: Response) => {
 
     // Keep user_stats updated with name/email from profile when available
     if (userStats) {
+      const shouldPersistStatsEmail = await hasUserStatsEmailColumn();
+      const userStatsUpdatePayload: any = { name: profile.name };
+      if (shouldPersistStatsEmail) {
+        userStatsUpdatePayload.email = profile.email;
+      }
+
       await supabase
         .from("user_stats")
-        .update({ name: profile.name, email: profile.email })
+        .update(userStatsUpdatePayload)
         .eq("id", profile.id);
     }
 

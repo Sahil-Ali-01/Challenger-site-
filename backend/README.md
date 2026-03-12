@@ -67,6 +67,9 @@ REDIS_URL=rediss://default:your-upstash-token@your-upstash-endpoint.upstash.io:6
 # Optional if token already included in REDIS_URL
 REDIS_TOKEN=your-upstash-token
 
+# Optional: disable the built-in email worker only if you run a separate worker service
+# ENABLE_IN_PROCESS_EMAIL_WORKER=false
+
 # JWT Configuration
 JWT_SECRET=your-very-secure-random-secret-key-change-in-production
 
@@ -150,6 +153,8 @@ Create a separate Render Background Worker service with:
 - **Start Command**: `pnpm run start:worker:email`
 
 Use the same environment variables as the web service, including `REDIS_URL` and SMTP vars.
+
+If you do run a dedicated worker, set `ENABLE_IN_PROCESS_EMAIL_WORKER=false` on the web service to avoid processing the same queue from both processes unless that is intentional.
 
 ### 5. Deploy
 
@@ -243,7 +248,7 @@ Run the SQL setup script from `COMPLETE_PROJECT_SQL.md` in the root directory.
 ### Registration
 1. User submits registration form
 2. Backend creates user in `profiles` table with bcrypt-hashed password
-3. Verification email job enqueued to BullMQ (processed by email worker)
+3. Verification email is queued to BullMQ when Redis is configured; if queueing is unavailable, the backend falls back to direct SMTP send
 4. User clicks verification link
 5. `email_verified` set to `true`
 6. User automatically logged in

@@ -22,7 +22,7 @@ function isOriginMatch(origin: string, allowedOrigin: string) {
 const app = createServer();
 const PORT = Number(process.env.PORT) || 10000;
 const enableInProcessEmailWorker =
-  process.env.ENABLE_IN_PROCESS_EMAIL_WORKER === "true";
+  process.env.ENABLE_IN_PROCESS_EMAIL_WORKER !== "false";
 
 // Health check endpoint
 app.get("/health", (_req, res) => {
@@ -112,14 +112,20 @@ async function startServer() {
 
   if (enableInProcessEmailWorker) {
     try {
-      startEmailWorker();
-      console.log("✅ In-process email worker started");
+      if (!process.env.REDIS_URL) {
+        console.warn(
+          "⚠️ In-process email worker not started because REDIS_URL is not configured; direct email fallback will be used where supported"
+        );
+      } else {
+        startEmailWorker();
+        console.log("✅ In-process email worker started");
+      }
     } catch (error) {
       console.error("❌ Failed to start email worker:", error);
     }
   } else {
     console.log(
-      "ℹ️ In-process email worker disabled (ENABLE_IN_PROCESS_EMAIL_WORKER=true to enable)"
+      "ℹ️ In-process email worker disabled (set ENABLE_IN_PROCESS_EMAIL_WORKER=false to keep it off)"
     );
   }
 }

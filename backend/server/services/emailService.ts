@@ -13,6 +13,14 @@ interface EmailOptions {
   text?: string;
 }
 
+function getFrontendUrl() {
+  return (
+    process.env.CLIENT_URL ||
+    process.env.FRONTEND_URL ||
+    "http://localhost:5173"
+  );
+}
+
 /**
  * Send generic email
  */
@@ -50,7 +58,7 @@ export async function sendVerificationEmail(
   verificationToken: string
 ): Promise<boolean> {
   try {
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = getFrontendUrl();
     const verificationLink = `${clientUrl}/auth/verify-email?token=${verificationToken}`;
     const htmlContent = getVerificationEmailTemplate(name, verificationLink);
 
@@ -76,7 +84,7 @@ export async function sendPasswordResetEmail(
   expirationTime: string = "1 hour"
 ): Promise<boolean> {
   try {
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = getFrontendUrl();
     const resetLink = `${clientUrl}/auth/reset-password?token=${resetToken}`;
     const htmlContent = getPasswordResetEmailTemplate(name, resetLink, expirationTime);
 
