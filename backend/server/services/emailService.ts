@@ -13,6 +13,18 @@ interface EmailOptions {
   text?: string;
 }
 
+function shouldPreferResendApi() {
+  const mode = String(process.env.EMAIL_DELIVERY_MODE || "").toLowerCase();
+  const provider = String(process.env.EMAIL_PROVIDER || "").toLowerCase();
+  const smtpHost = String(process.env.SMTP_HOST || "").toLowerCase();
+
+  return (
+    mode === "api-first" ||
+    provider === "resend_api" ||
+    smtpHost === "smtp.resend.com"
+  );
+}
+
 async function sendWithResendApi(options: EmailOptions, from: string, replyTo: string) {
   const resendApiKey = process.env.RESEND_API_KEY || process.env.SMTP_PASS;
 
@@ -69,6 +81,14 @@ export async function sendEmail(options: EmailOptions): Promise<boolean> {
   const replyToAddress = process.env.REPLY_TO || fromAddress;
   const from = `${fromName} <${fromAddress}>`;
 
+  if (shouldPreferResendApi()) {
+    const sentByApi = await sendWithResendApi(options, from, replyToAddress);
+    if (sentByApi) {
+      return true;
+    }
+    console.warn(`⚠️ Resend API-first delivery failed for ${options.to}; trying SMTP fallback`);
+  }
+
   const mailOptions = {
     // Visible sender users see in inbox.
     from,
@@ -85,6 +105,10 @@ export async function sendEmail(options: EmailOptions): Promise<boolean> {
     return true;
   } catch (error) {
     console.error(`❌ SMTP send failed for ${options.to}:`, error);
+
+    if (shouldPreferResendApi()) {
+      return false;
+    }
 
     const sentByApi = await sendWithResendApi(options, from, replyToAddress);
     if (sentByApi) {

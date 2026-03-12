@@ -96,6 +96,10 @@ export async function verifyMailerConnection() {
     console.log("✅ Email service connected successfully");
     return true;
   } catch (error) {
+    if (process.env.RESEND_API_KEY || process.env.SMTP_PASS) {
+      console.warn("⚠️ SMTP verification failed, but API fallback is configured; continuing with fallback mode");
+      return true;
+    }
     console.error("❌ Email service connection failed:", error);
     return false;
   }
