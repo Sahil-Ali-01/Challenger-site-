@@ -13,6 +13,48 @@ interface EmailOptions {
   text?: string;
 }
 
+function isLocalhostUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
+function getBackendPublicUrl() {
+  return (
+    process.env.API_BASE_URL ||
+    process.env.BACKEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    `http://localhost:${process.env.PORT || 8082}`
+  );
+}
+
+function normalizeUrl(url: string) {
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(url);
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+function getNonLocalhostUrl(...candidates: Array<string | undefined>) {
+  for (const candidate of candidates) {
+    const normalized = normalizeUrl(String(candidate || "").trim());
+    if (normalized && !isLocalhostUrl(normalized)) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
 function shouldPreferResendApi() {
   const mode = String(process.env.EMAIL_DELIVERY_MODE || "").toLowerCase();
   const provider = String(process.env.EMAIL_PROVIDER || "").toLowerCase();
@@ -65,11 +107,48 @@ async function sendWithResendApi(options: EmailOptions, from: string, replyTo: s
 }
 
 function getFrontendUrl() {
-  return (
-    process.env.CLIENT_URL ||
-    process.env.FRONTEND_URL ||
-    "http://localhost:5173"
+  const corsOrigin = String(process.env.CORS_ORIGIN || "")
+    .split(",")
+    .map((item) => item.trim())
+    .find(Boolean);
+
+  const vercelProductionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "";
+
+  const publicFrontend = getNonLocalhostUrl(
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    corsOrigin,
+    vercelProductionUrl,
+    "https://challenger-site.vercel.app"
   );
+
+  if (publicFrontend) {
+    return publicFrontend;
+  }
+
+  const backendPublicUrl = normalizeUrl(getBackendPublicUrl());
+  if (backendPublicUrl && !isLocalhostUrl(backendPublicUrl)) {
+    return backendPublicUrl;
+  }
+
+  return "http://localhost:5173";
+}
+
+function getVerificationLinkBase() {
+  const frontendUrl = getFrontendUrl();
+  const backendUrl = getBackendPublicUrl();
+  const canUseBackendPublicUrl = !isLocalhostUrl(backendUrl);
+
+  if (isLocalhostUrl(frontendUrl) && canUseBackendPublicUrl) {
+    console.warn(
+      `⚠️ CLIENT_URL/FRONTEND_URL is localhost; using backend verification link base: ${backendUrl}`
+    );
+    return { baseUrl: backendUrl, useBackendPath: true };
+  }
+
+  return { baseUrl: frontendUrl, useBackendPath: false };
 }
 
 /**
@@ -128,8 +207,11 @@ export async function sendVerificationEmail(
   verificationToken: string
 ): Promise<boolean> {
   try {
-    const clientUrl = getFrontendUrl();
-    const verificationLink = `${clientUrl}/auth/verify-email?token=${verificationToken}`;
+    const { baseUrl, useBackendPath } = getVerificationLinkBase();
+    const verificationPath = useBackendPath
+      ? `/api/auth/verify-email?token=${verificationToken}`
+      : `/auth/verify-email?token=${verificationToken}`;
+    const verificationLink = `${baseUrl}${verificationPath}`;
     const htmlContent = getVerificationEmailTemplate(name, verificationLink);
 
     return await sendEmail({
