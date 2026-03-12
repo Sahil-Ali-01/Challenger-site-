@@ -13,6 +13,45 @@ interface EmailOptions {
   text?: string;
 }
 
+async function sendWithResendApi(options: EmailOptions, from: string, replyTo: string) {
+  const resendApiKey = process.env.RESEND_API_KEY || process.env.SMTP_PASS;
+
+  if (!resendApiKey) {
+    return false;
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [options.to],
+        subject: options.subject,
+        html: options.html,
+        text: options.text || "",
+        reply_to: replyTo,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`❌ Resend API send failed for ${options.to}:`, errorBody);
+      return false;
+    }
+
+    const payload = (await response.json()) as { id?: string };
+    console.log(`✅ Email sent via Resend API to ${options.to}. ID: ${payload.id || "unknown"}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Resend API request failed for ${options.to}:`, error);
+    return false;
+  }
+}
+
 function getFrontendUrl() {
   return (
     process.env.CLIENT_URL ||
@@ -25,26 +64,33 @@ function getFrontendUrl() {
  * Send generic email
  */
 export async function sendEmail(options: EmailOptions): Promise<boolean> {
+  const fromAddress = process.env.EMAIL_FROM || "noreply@biharicoder.com";
+  const fromName = process.env.EMAIL_FROM_NAME || "BihariCoder";
+  const replyToAddress = process.env.REPLY_TO || fromAddress;
+  const from = `${fromName} <${fromAddress}>`;
+
+  const mailOptions = {
+    // Visible sender users see in inbox.
+    from,
+    to: options.to,
+    subject: options.subject,
+    html: options.html,
+    text: options.text || "",
+    replyTo: replyToAddress,
+  };
+
   try {
-    const fromAddress = process.env.EMAIL_FROM || "noreply@biharicoder.com";
-    const fromName = process.env.EMAIL_FROM_NAME || "BihariCoder";
-    const replyToAddress = process.env.REPLY_TO || fromAddress;
-
-    const mailOptions = {
-      // Visible sender users see in inbox.
-      from: `${fromName} <${fromAddress}>`,
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-      text: options.text || "",
-      replyTo: replyToAddress,
-    };
-
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent to ${options.to}. Message ID: ${info.messageId}`);
+    console.log(`✅ Email sent via SMTP to ${options.to}. Message ID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error(`❌ Failed to send email to ${options.to}:`, error);
+    console.error(`❌ SMTP send failed for ${options.to}:`, error);
+
+    const sentByApi = await sendWithResendApi(options, from, replyToAddress);
+    if (sentByApi) {
+      return true;
+    }
+
     return false;
   }
 }
